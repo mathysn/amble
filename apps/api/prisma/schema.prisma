@@ -1,0 +1,103 @@
+// Amble data model.
+//
+// SQLite for zero-config local dev. To move to Postgres, change `provider` to
+// "postgresql" and point DATABASE_URL at your instance — no model changes needed.
+// Note: enums and native JSON aren't used, since SQLite doesn't support them; the
+// enum-like fields (category, status, pace, units) are validated by @amble/shared,
+// and JSON blobs (route geometry, raw OSM tags) are stored as strings.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// An anonymous device identity. The bearer token is stored only as a hash.
+model Device {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  createdAt DateTime  @default(now())
+  settings  Settings?
+  walks     Walk[]
+  saved     SavedCuriosity[]
+}
+
+model Settings {
+  deviceId       String  @id
+  device         Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  defaultLength  Int     @default(30)
+  pace           String  @default("easy")
+  avoidBusyRoads Boolean @default(true)
+  includeNiche   Boolean @default(true)
+  includeHidden  Boolean @default(true)
+  includeScenic  Boolean @default(false)
+  units          String  @default("km")
+}
+
+/// A point of interest. Cached from OpenStreetMap (source "osm") or seeded ("seed").
+model Curiosity {
+  id            String   @id @default(cuid())
+  source        String
+  osmId         String?  @unique
+  name          String
+  category      String
+  blurb         String
+  lat           Float
+  lng           Float
+  era           String?
+  neighbourhood String?
+  meta          String? // JSON string of raw OSM tags
+  createdAt     DateTime @default(now())
+  walkLinks     WalkCuriosity[]
+  saves         SavedCuriosity[]
+
+  @@index([lat, lng])
+}
+
+model Walk {
+  id             String    @id @default(cuid())
+  deviceId       String
+  device         Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  status         String    @default("planned")
+  startLat       Float
+  startLng       Float
+  plannedMinutes Int
+  distanceKm     Float
+  routeGeoJson   String // JSON string of a GeoJSON LineString
+  stepsJson      String  @default("[]") // JSON string of RouteStep[]
+  source         String  @default("synthetic") // through | loop | synthetic
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  curiosities    WalkCuriosity[]
+
+  @@index([deviceId])
+}
+
+model WalkCuriosity {
+  id          String    @id @default(cuid())
+  walkId      String
+  curiosityId String
+  order       Int
+  found       Boolean   @default(false)
+  detourMin   Int       @default(0)
+  distanceM   Int       @default(0)
+  walk        Walk      @relation(fields: [walkId], references: [id], onDelete: Cascade)
+  curiosity   Curiosity @relation(fields: [curiosityId], references: [id], onDelete: Cascade)
+
+  @@unique([walkId, curiosityId])
+}
+
+model SavedCuriosity {
+  id          String    @id @default(cuid())
+  deviceId    String
+  curiosityId String
+  savedAt     DateTime  @default(now())
+  device      Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  curiosity   Curiosity @relation(fields: [curiosityId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, curiosityId])
+}

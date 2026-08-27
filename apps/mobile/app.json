@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Amble",
+    "slug": "amble",
+    "scheme": "amble",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "backgroundColor": "#F5F1E8",
+    "splash": {
+      "backgroundColor": "#F5F1E8",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.amble.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Amble uses your location only while you're on a walk, to build a route out from where you stand and reveal curiosities as you get close."
+      }
+    },
+    "android": {
+      "package": "com.amble.app",
+      "adaptiveIcon": { "backgroundColor": "#F5F1E8" }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      "expo-splash-screen",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Amble uses your location only while you're on a walk, to build a route out from where you stand and reveal curiosities as you get close."
+        }
+      ]
+    ]
+  }
+}
