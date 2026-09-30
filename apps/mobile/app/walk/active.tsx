@@ -1,156 +1,293 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import type { Coord, WalkCuriosity } from '@amble/shared';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useKeepAwake } from 'expo-keep-awake';
+import type { WalkCuriosity } from '@amble/shared';
 import { Screen } from '../../src/components/Screen';
 import { Button } from '../../src/components/Button';
 import { WebMap } from '../../src/components/WebMap';
-import { ProgressHeader } from '../../src/components/ProgressHeader';
-import { Overline, Serif } from '../../src/components/typography';
-import { useWalk } from '../../src/api/hooks';
+import { DirectionsList } from '../../src/components/DirectionsList';
+import { ManeuverBanner, SimBadge } from '../../src/components/nav/ManeuverBanner';
+import { MapControls, RecenterPill } from '../../src/components/nav/MapControls';
+import { NavSheet } from '../../src/components/nav/NavSheet';
+import { Mono, Overline, Serif } from '../../src/components/typography';
+import { useCompleteWalk, useResumeWalk, useSettings, useWalk } from '../../src/api/hooks';
 import { useWalkSession } from '../../src/store/walkSession';
-import { watchLocation } from '../../src/lib/location';
-import { haversineM } from '../../src/lib/geo';
-import { currentManeuver } from '../../src/lib/navigation';
-import { formatMetres } from '../../src/lib/format';
+import { useNavPrefs } from '../../src/store/navPrefs';
+import { useLiveLocation } from '../../src/hooks/useLiveLocation';
+import { useNavigation } from '../../src/hooks/useNavigation';
+import { prepareVoice } from '../../src/lib/voice';
+import { success } from '../../src/lib/haptics';
+import { formatArrival, formatDuration, formatNavDistance } from '../../src/lib/format';
+import type { CameraMode } from '../../src/lib/map/bridge';
 
-const REVEAL_THRESHOLD_M = 60;
+/** After panning the map, follow the walker again once they've left it alone this long. */
+const IDLE_RECENTER_MS = 15_000;
+/** Height of the collapsed sheet's content, above the bottom safe area. */
+const SHEET_PEEK = 168;
+/** Show the "then …" chip when the maneuver after next comes this soon after it. */
+const THEN_CHIP_M = 60;
 
-/** 06 · Walking — live map, progress, and proximity-triggered discoveries. */
+/**
+ * 06 · Walking — full-screen turn-by-turn in Amble's palette: a heading-up map
+ * that follows the walker, the next maneuver up top, and a sheet with time,
+ * distance and the directions left. Curiosities still reveal themselves by
+ * proximity; the Discovery / Paused / End-walk modals open over this screen,
+ * which keeps tracking underneath but goes quiet while covered.
+ */
 export default function ActiveWalk() {
+  useKeepAwake();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: walk } = useWalk(id, { refetchOnWindowFocus: true });
+  const { data: settings } = useSettings();
+  const resume = useResumeWalk();
+  const complete = useCompleteWalk();
+  const focused = useIsFocused();
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
 
-  const { position, setPosition, begin, markRevealed, revealedIds } = useWalkSession();
-  const [now, setNow] = useState(Date.now());
-  const navigatingRef = useRef(false);
-
-  const startCoord: Coord | null = walk ? { lat: walk.startLat, lng: walk.startLng } : null;
+  const { walkId, begin, markRevealed, revealedIds, setFix } = useWalkSession();
+  const { muted, threeD, load, setMuted, setThreeD } = useNavPrefs();
+  useEffect(() => {
+    void load();
+  }, [load]);
+  useEffect(() => {
+    if (!muted) void prepareVoice();
+  }, [muted]);
 
   // Ensure the session knows this walk (e.g. after an app reload mid-walk).
   useEffect(() => {
-    if (walk && useWalkSession.getState().walkId !== walk.id) {
-      begin(walk.id, { lat: walk.startLat, lng: walk.startLng });
-    }
-  }, [walk, begin]);
+    if (walk && walkId !== walk.id) begin(walk.id);
+  }, [walk, walkId, begin]);
 
-  // Tick the clock every second for the countdown.
+  const [simulating, setSimulating] = useState(false);
+  const live = useLiveLocation({
+    enabled: !!walk,
+    simulate: __DEV__ && simulating && walk ? walk.route : null,
+  });
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
+    if (live.fix) setFix(live.fix);
+  }, [live.fix, setFix]);
 
-  // Follow the walker's real position.
-  useEffect(() => {
-    let cleanup: (() => void) | undefined;
-    watchLocation((c) => setPosition(c)).then((fn) => (cleanup = fn));
-    return () => cleanup?.();
-  }, [setPosition]);
-
-  const nextCuriosity = useMemo(
-    () => walk?.curiosities.find((c) => !c.found) ?? null,
-    [walk],
+  const onReveal = useCallback(
+    (c: WalkCuriosity) => {
+      markRevealed(c.id);
+      success();
+      router.push(`/discovery?id=${id}&cid=${c.id}`);
+    },
+    [id, markRevealed, router],
   );
 
-  const here = position ?? startCoord;
-  const distanceToNext =
-    here && nextCuriosity ? haversineM(here, { lat: nextCuriosity.lat, lng: nextCuriosity.lng }) : null;
+  const units = settings?.units ?? 'km';
+  const nav = useNavigation({
+    walk,
+    fix: live.fix,
+    compass: live.heading,
+    units,
+    pace: settings?.pace ?? 'easy',
+    focused,
+    muted,
+    revealedIds,
+    onReveal,
+  });
 
-  const openDiscovery = (c: WalkCuriosity) => {
-    if (navigatingRef.current) return;
-    navigatingRef.current = true;
-    markRevealed(c.id);
-    router.push(`/discovery?id=${id}&cid=${c.id}`);
-    setTimeout(() => (navigatingRef.current = false), 800);
+  // ── camera: follow, the whole route, or free after a pan ────────────────
+  const [camera, setCamera] = useState<CameraMode>('follow');
+  const idle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearIdle = () => {
+    if (idle.current) clearTimeout(idle.current);
+    idle.current = null;
+  };
+  useEffect(() => clearIdle, []);
+  const follow = () => {
+    clearIdle();
+    setCamera('follow');
+  };
+  const onGesture = useCallback(() => {
+    setCamera('free');
+    clearIdle();
+    idle.current = setTimeout(() => setCamera('follow'), IDLE_RECENTER_MS);
+  }, []);
+  const toggleOverview = () => {
+    clearIdle();
+    setCamera((c) => (c === 'overview' ? 'follow' : 'overview'));
   };
 
-  // Auto-reveal when close enough.
+  // ── finishing ──────────────────────────────────────────────────────────
+  const finishing = useRef(false);
   useEffect(() => {
-    if (!nextCuriosity || distanceToNext === null) return;
-    if (distanceToNext <= REVEAL_THRESHOLD_M && !revealedIds.includes(nextCuriosity.id)) {
-      openDiscovery(nextCuriosity);
+    // Finished from somewhere other than this screen's own buttons (e.g. a reload).
+    if (walk?.status === 'completed' && focused && !finishing.current) {
+      finishing.current = true;
+      router.replace(`/walk/complete?id=${id}`);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [distanceToNext, nextCuriosity, revealedIds]);
+  }, [walk?.status, focused, id, router]);
+  const onFinish = () => {
+    finishing.current = true;
+    complete.mutate(id, { onSuccess: () => router.replace(`/walk/complete?id=${id}`) });
+  };
 
-  // Leave for the summary once the walk is finished.
-  useEffect(() => {
-    if (walk?.status === 'completed') router.replace(`/walk/complete?id=${id}`);
-  }, [walk?.status, id, router]);
+  // ── layout ─────────────────────────────────────────────────────────────
+  const [bannerBottom, setBannerBottom] = useState(insets.top + 120);
+  const collapsed = SHEET_PEEK + insets.bottom;
+  const expanded = Math.min(windowHeight * 0.72, windowHeight - insets.top - 48);
 
-  if (!walk || !startCoord) {
-    return <Screen className="items-center justify-center"><Serif className="text-[20px] text-ink/40">Loading…</Serif></Screen>;
+  if (!walk) {
+    return (
+      <Screen className="items-center justify-center">
+        <Serif className="text-[20px] text-ink/40">Loading…</Serif>
+      </Screen>
+    );
   }
 
+  const { tracker, view, index, status } = nav;
+  const next = view?.next ?? null;
+  const afterNext = index && view ? (index.steps[view.stepIndex + 2] ?? null) : null;
+  const then =
+    next && afterNext && afterNext.type !== 10 && afterNext.alongM - next.alongM <= THEN_CHIP_M
+      ? afterNext
+      : null;
+
   const found = walk.curiosities.filter((c) => c.found).length;
-  const elapsedMin = walk.startedAt ? (now - new Date(walk.startedAt).getTime()) / 60_000 : 0;
-  const minutesLeft = Math.ceil(walk.plannedMinutes - elapsedMin);
-  const progress = Math.min(1, elapsedMin / walk.plannedMinutes);
-  const maneuver = here ? currentManeuver(here, walk.route, walk.steps) : null;
+  const cameraMode: CameraMode = status === 'finding' ? 'overview' : camera;
+  const eta = nav.etaMin;
+  const progress = index && tracker ? Math.min(1, tracker.alongM / Math.max(1, index.totalM)) : 0;
 
   return (
-    <Screen className="px-6">
-      <View className="pt-2">
-        <ProgressHeader minutesLeft={minutesLeft} found={found} total={walk.curiosities.length} progress={progress} />
+    <View className="flex-1 bg-paper">
+      <WebMap
+        mode="nav"
+        fill
+        rounded={false}
+        style={StyleSheet.absoluteFill}
+        route={walk.route}
+        routeKey={index?.key}
+        start={{ lat: walk.startLat, lng: walk.startLng }}
+        stops={walk.curiosities.map((c) => ({
+          lat: c.lat,
+          lng: c.lng,
+          found: c.found,
+          next: c.id === nav.nextCuriosity?.id,
+        }))}
+        puck={
+          tracker?.display
+            ? { lat: tracker.display.lat, lng: tracker.display.lng, accuracy: tracker.accuracy }
+            : null
+        }
+        bearing={{ puck: live.heading, camera: nav.cameraBearing }}
+        progress={
+          tracker?.joined && index?.real
+            ? { seg: tracker.seg, lat: tracker.snapped.lat, lng: tracker.snapped.lng }
+            : null
+        }
+        camera={cameraMode}
+        threeD={threeD}
+        insets={{ top: bannerBottom, bottom: collapsed }}
+        animating={focused}
+        onGesture={onGesture}
+        onPerfLow={() => setThreeD(false)}
+      />
+
+      <View
+        pointerEvents="box-none"
+        style={{ position: 'absolute', top: insets.top + 8, left: 12, right: 12 }}
+        onLayout={(e) => setBannerBottom(e.nativeEvent.layout.y + e.nativeEvent.layout.height)}
+      >
+        {simulating && <SimBadge />}
+        <ManeuverBanner
+          status={status}
+          next={next}
+          then={then}
+          distToNextM={view?.distToNextM ?? null}
+          first={view?.stepIndex === 0 && next?.type === 11}
+          pointer={nav.pointer}
+          cameraBearing={nav.cameraBearing}
+          hasNextCuriosity={!!nav.nextCuriosity}
+          units={units}
+          onResume={() => resume.mutate(id)}
+          onFinish={onFinish}
+          style={simulating ? { marginTop: 6 } : undefined}
+        />
       </View>
 
-      <View className="relative mt-5 flex-1 overflow-hidden rounded-panel">
-        <WebMap
-          route={walk.route}
-          start={startCoord}
-          stops={walk.curiosities}
-          position={here}
-          fill
-        />
+      <MapControls
+        style={{ position: 'absolute', right: 12, top: bannerBottom + 12 }}
+        threeD={threeD}
+        onToggle3D={() => setThreeD(!threeD)}
+        muted={muted}
+        onToggleMute={() => setMuted(!muted)}
+        overview={cameraMode === 'overview'}
+        onToggleOverview={toggleOverview}
+        simulating={simulating}
+        onToggleSimulate={__DEV__ ? () => setSimulating((s) => !s) : undefined}
+      />
 
-        <View className="absolute left-4 right-4 top-4 rounded-panel bg-paper/90 px-4 py-3.5">
-          {maneuver ? (
-            <>
-              <Overline tint="sage">
-                {maneuver.wayName ? maneuver.wayName : 'On your wander'} · {formatMetres(maneuver.distanceToTurnM)}
-              </Overline>
-              <Serif className="mt-1.5 text-[20px]">{maneuver.instruction}</Serif>
-            </>
-          ) : (
-            <>
-              <Overline tint="sage">{directionHint(here, nextCuriosity)}</Overline>
-              <Serif className="mt-1.5 text-[20px]">
-                {nextCuriosity ? "Keep going — something's near." : 'You’ve found them all — wander on.'}
+      {cameraMode === 'free' && (
+        <RecenterPill onPress={follow} style={{ position: 'absolute', left: 12, bottom: collapsed + 12 }} />
+      )}
+
+      <NavSheet
+        collapsedHeight={collapsed}
+        expandedHeight={expanded}
+        bottomInset={insets.bottom}
+        grab={
+          <View>
+            <View className="flex-row items-end justify-between">
+              <Serif className="text-[28px] leading-[32px] text-sage-dark">
+                {eta !== null ? formatDuration(eta) : '—'}
               </Serif>
-            </>
-          )}
-        </View>
-
-        {nextCuriosity && distanceToNext !== null && (
+              <Overline className="mb-1.5">
+                surprise {found} / {walk.curiosities.length}
+              </Overline>
+            </View>
+            <Text className="mt-0.5 font-sans text-[14px] text-ink/60">
+              {nav.remainingM !== null ? formatNavDistance(nav.remainingM, units) : '—'}
+              {eta !== null ? ` · back by ${formatArrival(new Date(Date.now() + eta * 60_000))}` : ''}
+            </Text>
+            <View className="mt-3 h-[3px] overflow-hidden rounded-full bg-ink/10">
+              <View className="h-full bg-sage" style={{ width: `${progress * 100}%` }} />
+            </View>
+          </View>
+        }
+        peek={
           <Pressable
-            onPress={() => openDiscovery(nextCuriosity)}
-            className="absolute bottom-4 left-4 right-4 flex-row items-center gap-3 rounded-panel bg-paper/90 px-4 py-3.5"
+            onPress={() => nav.nextCuriosity && onReveal(nav.nextCuriosity)}
+            className="mt-3 flex-row items-center gap-3 rounded-panel bg-paper px-4 py-3.5"
           >
             <View className="h-2 w-2 rounded-full bg-sage" />
-            <Text className="flex-1 font-sans-medium text-[14px] text-ink">
-              Next curiosity · {nextCuriosity.name}
+            <Text className="flex-1 font-sans-medium text-[14px] text-ink" numberOfLines={1}>
+              {nav.nextCuriosity
+                ? `Next curiosity · ${nav.nextCuriosity.name}`
+                : 'You’ve found them all — wander on.'}
             </Text>
-            <Text className="font-sans-semibold text-[12px] text-ink/45">{formatMetres(distanceToNext)}</Text>
+            {nav.nextCuriosityM !== null && (
+              <Mono className="text-ink/45">{formatNavDistance(nav.nextCuriosityM, units)}</Mono>
+            )}
           </Pressable>
+        }
+      >
+        {index?.real && view ? (
+          <>
+            <Overline className="mb-1 mt-5">Directions</Overline>
+            <DirectionsList
+              steps={index.steps}
+              units={units}
+              fromStep={view.stepIndex}
+              activeStep={view.stepIndex}
+            />
+          </>
+        ) : (
+          <Text className="mt-5 font-sans text-[14px] leading-[21px] text-ink/60">
+            This wander has no street directions — follow the arrow, or wherever looks good.
+          </Text>
         )}
-      </View>
-
-      <View className="mt-4 flex-row gap-3 pb-1">
-        <Button label="Pause" variant="outline" className="flex-1" onPress={() => router.push(`/paused?id=${id}`)} />
-        <Button label="End walk" variant="sage" className="flex-1" onPress={() => router.push(`/end-walk?id=${id}`)} />
-      </View>
-    </Screen>
+        <View className="mt-6 flex-row gap-3">
+          <Button label="Pause" variant="outline" className="flex-1" onPress={() => router.push(`/paused?id=${id}`)} />
+          <Button label="End walk" variant="sage" className="flex-1" onPress={() => router.push(`/end-walk?id=${id}`)} />
+        </View>
+      </NavSheet>
+    </View>
   );
-}
-
-/** A gentle cardinal-direction nudge toward the next curiosity. */
-function directionHint(from: Coord | null, to: { lat: number; lng: number } | null): string {
-  if (!from || !to) return 'Wander wherever looks good';
-  const dLng = to.lng - from.lng;
-  const dLat = to.lat - from.lat;
-  const angle = (Math.atan2(dLng, dLat) * 180) / Math.PI;
-  const dirs = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
-  const idx = Math.round(((angle + 360) % 360) / 45) % 8;
-  return `Head roughly ${dirs[idx]}`;
 }

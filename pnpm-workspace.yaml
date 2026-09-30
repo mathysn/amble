@@ -6,6 +6,12 @@ allowBuilds:
   '@prisma/engines': true
   esbuild: true
   prisma: true
+minimumReleaseAgeExclude:
+  - expo-constants@57.0.20
+  - expo-modules-core@57.0.20
+  - expo@57.0.26
+  - '@expo/ui@57.0.21'
+  - expo-router@57.0.24
 onlyBuiltDependencies:
   - "@prisma/client"
   - "@prisma/engines"

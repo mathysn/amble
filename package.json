@@ -8,6 +8,7 @@
     "mobile": "pnpm --filter @amble/mobile start",
     "build:shared": "pnpm --filter @amble/shared build",
     "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --if-present test",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\""
   },
   "devDependencies": {

@@ -31,7 +31,7 @@ export default function RoutePreview() {
   const startCoord = { lat: walk.startLat, lng: walk.startLng };
 
   const onStart = () => {
-    begin(walk.id, startCoord);
+    begin(walk.id);
     start.mutate(walk.id, { onSuccess: () => router.replace(`/walk/active?id=${walk.id}`) });
   };
 
@@ -99,7 +99,7 @@ export default function RoutePreview() {
                 <ChevronRightIcon />
               </View>
             </Pressable>
-            {showDirections && <DirectionsList steps={walk.steps} />}
+            {showDirections && <DirectionsList steps={walk.steps} units={units} />}
           </View>
         )}
 

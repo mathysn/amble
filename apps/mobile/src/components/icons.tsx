@@ -85,6 +85,49 @@ export function ChevronLeftIcon({ size = 18, color = colors.ink }: IconProps) {
   );
 }
 
+export function SpeakerIcon({ size = 22, color = colors.ink }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20" fill="none">
+      <Path d="M3 8h3l4-3.5v11L6 12H3z" stroke={color} strokeWidth={1.6} strokeLinejoin="round" />
+      <Path d="M13 7.5a3.5 3.5 0 010 5M15.2 5.3a6.6 6.6 0 010 9.4" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+export function SpeakerOffIcon({ size = 22, color = colors.ink }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20" fill="none">
+      <Path d="M3 8h3l4-3.5v11L6 12H3z" stroke={color} strokeWidth={1.6} strokeLinejoin="round" />
+      <Path d="M13 8l4 4M17 8l-4 4" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+/** A navigation arrowhead — "follow me again". */
+export function RecenterIcon({ size = 18, color = colors.ink }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20" fill="none">
+      <Path d="M10 2.5l5.5 14-5.5-3.2-5.5 3.2z" stroke={color} strokeWidth={1.7} strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+/** The whole route at a glance — a small loop. */
+export function OverviewIcon({ size = 22, color = colors.ink }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20" fill="none">
+      <Path
+        d="M5 15c-2-3 0-9 5-10s8 3 6 7-7 5-9 4"
+        stroke={color}
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        strokeDasharray="0.5 3.2"
+      />
+      <Circle cx={5} cy={15} r={1.8} fill={color} />
+    </Svg>
+  );
+}
+
 export function ChevronRightIcon({ size = 14, color = colors.ink40 }: IconProps) {
   return (
     <Svg width={(size * 8) / 14} height={size} viewBox="0 0 8 14" fill="none">

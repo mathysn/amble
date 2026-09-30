@@ -1,29 +1,53 @@
-import { View } from 'react-native';
-import Svg, { Circle } from 'react-native-svg';
-import type { RouteStep } from '@amble/shared';
-import { Text } from 'react-native';
+import { Text, View } from 'react-native';
+import type { RouteStep, Units } from '@amble/shared';
+import { ManeuverIcon } from './ManeuverIcon';
 import { Mono } from './typography';
-import { formatMetres } from '../lib/format';
+import { formatNavDistance } from '../lib/format';
+import { maneuverPhrase } from '../lib/nav';
 import { colors } from '../theme';
 
-/** A calm, paper-styled turn-by-turn list. */
-export function DirectionsList({ steps }: { steps: RouteStep[] }) {
+/**
+ * A calm, paper-styled turn-by-turn list, in Amble's own wording. On the walk
+ * screen it starts at the step being walked (`fromStep`), which is highlighted.
+ */
+export function DirectionsList({
+  steps,
+  units = 'km',
+  fromStep = 0,
+  activeStep,
+}: {
+  steps: RouteStep[];
+  units?: Units;
+  fromStep?: number;
+  activeStep?: number;
+}) {
+  const shown = steps.slice(fromStep);
   return (
     <View>
-      {steps.map((step, i) => (
-        <View
-          key={i}
-          className={`flex-row items-center gap-3 py-3 ${i === steps.length - 1 ? '' : 'border-b border-ink/[0.08]'}`}
-        >
-          <Svg width={10} height={10} viewBox="0 0 10 10">
-            <Circle cx={5} cy={5} r={3.5} fill="none" stroke={colors.sage} strokeWidth={2} />
-          </Svg>
-          <Text className="flex-1 font-sans text-[14px] leading-[19px] text-ink">
-            {step.instruction}
-          </Text>
-          {step.distanceM > 0 ? <Mono className="text-ink/40">{formatMetres(step.distanceM)}</Mono> : null}
-        </View>
-      ))}
+      {shown.map((step, i) => {
+        const index = fromStep + i;
+        const active = index === activeStep;
+        return (
+          <View
+            key={`${index}:${step.startIndex}`}
+            className={`flex-row items-center gap-3 py-3 ${i === shown.length - 1 ? '' : 'border-b border-ink/[0.08]'}`}
+          >
+            <View
+              className={`h-9 w-9 items-center justify-center rounded-full ${active ? 'bg-sage' : 'bg-sage/15'}`}
+            >
+              <ManeuverIcon type={step.type} size={22} color={active ? colors.paper : colors.sageDark} />
+            </View>
+            <Text
+              className={`flex-1 text-[14px] leading-[19px] text-ink ${active ? 'font-sans-semibold' : 'font-sans'}`}
+            >
+              {maneuverPhrase(step, { first: index === 0 })}
+            </Text>
+            {step.distanceM > 0 ? (
+              <Mono className="text-ink/40">{formatNavDistance(step.distanceM, units)}</Mono>
+            ) : null}
+          </View>
+        );
+      })}
     </View>
   );
 }

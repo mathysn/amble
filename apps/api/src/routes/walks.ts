@@ -5,14 +5,20 @@ import {
   ErrorResponseSchema,
   PlanWalkRequestSchema,
   PACE_METRES_PER_MIN,
+  RerouteRequestSchema,
   WalkListResponseSchema,
   WalkSchema,
   type Category,
   type Pace,
+  type RouteGeometry,
+  type RouteSource,
+  type RouteStep,
 } from '@amble/shared';
 import { prisma } from '../db.js';
 import { findCuriositiesNear } from '../services/curiosityStore.js';
 import { generateWander, type Candidate } from '../services/route.js';
+import { orsRouter, type Router } from '../services/routing.js';
+import { planReroute, RoutingUnavailableError } from '../services/reroute.js';
 import { toWalk, toWalkSummary } from '../lib/serialize.js';
 
 const IdParams = z.object({ id: z.string() });
@@ -24,7 +30,17 @@ function searchRadius(minutes: number, pace: Pace): number {
   return Math.min(4000, Math.max(800, (minutes * PACE_METRES_PER_MIN[pace]) / 2));
 }
 
-export const walkRoutes: FastifyPluginAsyncZod = async (fastify) => {
+/** Minimum gap between reroutes of one walk (the client throttles harder; this guards ORS). */
+const REROUTE_MIN_INTERVAL_MS = 10_000;
+const lastReroute = new Map<string, number>();
+
+export type WalkRoutesOptions = {
+  /** Injected in tests; defaults to OpenRouteService. */
+  router?: Router;
+};
+
+export const walkRoutes: FastifyPluginAsyncZod<WalkRoutesOptions> = async (fastify, opts) => {
+  const router = opts.router ?? orsRouter;
   fastify.addHook('preHandler', fastify.requireDevice);
 
   // ── Plan a new wander ────────────────────────────────────────────────────
@@ -49,7 +65,14 @@ export const walkRoutes: FastifyPluginAsyncZod = async (fastify) => {
 
       // Always returns a plan — real route through curiosities, a real loop, or
       // a stylized fallback — so a walk can be started anywhere.
-      const plan = await generateWander({ start, minutes, pace, candidates, seed: Date.now() & 0xffff });
+      const plan = await generateWander({
+        start,
+        minutes,
+        pace,
+        candidates,
+        seed: Date.now() & 0xffff,
+        router,
+      });
 
       const walk = await prisma.walk.create({
         data: {
@@ -120,6 +143,7 @@ export const walkRoutes: FastifyPluginAsyncZod = async (fastify) => {
         pace,
         candidates,
         seed: (Math.random() * 0xffff) | 0,
+        router,
       });
 
       const walk = await prisma.$transaction(async (tx) => {
@@ -173,6 +197,83 @@ export const walkRoutes: FastifyPluginAsyncZod = async (fastify) => {
   transition('/walks/:id/pause', () => ({ status: 'paused' }));
   transition('/walks/:id/resume', () => ({ status: 'active' }));
   transition('/walks/:id/complete', () => ({ status: 'completed', completedAt: new Date() }));
+
+  // ── Reroute a walk in progress ──────────────────────────────────────────
+  // Called when the walker leaves the route (`rejoin`) or hasn't reached the
+  // start yet (`approach`). Replaces the stored route/steps; the walked prefix
+  // is kept so the history and thumbnails stay whole.
+  fastify.post(
+    '/walks/:id/reroute',
+    {
+      schema: {
+        params: IdParams,
+        body: RerouteRequestSchema,
+        response: { 200: WalkSchema, 404: E, 409: E, 429: E, 503: E },
+      },
+    },
+    async (req, reply) => {
+      const existing = await prisma.walk.findFirst({
+        where: { id: req.params.id, deviceId: req.deviceId },
+        include: walkInclude,
+      });
+      if (!existing) return reply.code(404).send({ error: 'Walk not found' });
+      if (existing.status !== 'active') {
+        return reply.code(409).send({ error: 'Only an active walk can be rerouted' });
+      }
+
+      const route = JSON.parse(existing.routeGeoJson) as RouteGeometry;
+      const { lat, lng, strategy, fromIndex, coordsCount } = req.body;
+      if (route.coordinates.length !== coordsCount || (fromIndex ?? 0) >= coordsCount) {
+        return reply.code(409).send({ error: 'Route changed' });
+      }
+
+      const now = Date.now();
+      const last = lastReroute.get(existing.id);
+      if (last !== undefined && now - last < REROUTE_MIN_INTERVAL_MS) {
+        return reply.code(429).send({ error: 'Rerouting too often' });
+      }
+      lastReroute.set(existing.id, now);
+
+      let plan;
+      try {
+        plan = await planReroute({
+          route,
+          steps: JSON.parse(existing.stepsJson) as RouteStep[],
+          source: existing.source as RouteSource,
+          start: { lat: existing.startLat, lng: existing.startLng },
+          here: { lat, lng },
+          curiosities: existing.curiosities.map((c) => ({
+            lat: c.curiosity.lat,
+            lng: c.curiosity.lng,
+            order: c.order,
+            found: c.found,
+          })),
+          distanceKm: existing.distanceKm,
+          strategy,
+          fromIndex,
+          router,
+        });
+      } catch (err) {
+        if (err instanceof RoutingUnavailableError) {
+          req.log.warn({ err: err.cause }, 'reroute: routing unavailable');
+          return reply.code(503).send({ error: 'Routing unavailable' });
+        }
+        throw err;
+      }
+
+      const walk = await prisma.walk.update({
+        where: { id: existing.id },
+        data: {
+          routeGeoJson: JSON.stringify(plan.route),
+          stepsJson: JSON.stringify(plan.steps),
+          distanceKm: plan.distanceKm,
+          source: plan.source,
+        },
+        include: walkInclude,
+      });
+      return toWalk(walk);
+    },
+  );
 
   // ── Mark a curiosity found ───────────────────────────────────────────────
   fastify.post(

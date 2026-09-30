@@ -12,15 +12,26 @@ import { walkRoutes } from './routes/walks.js';
 import { savedRoutes } from './routes/saved.js';
 import { curiosityRoutes } from './routes/curiosities.js';
 import { geoRoutes } from './routes/geo.js';
+import type { Router } from './services/routing.js';
 
-export function buildApp() {
+export type AppOptions = {
+  /** Defaults to pretty logs in dev; tests pass false. */
+  logger?: boolean;
+  /** Routing backend for planning/rerouting; defaults to OpenRouteService. Tests inject a fake. */
+  router?: Router;
+};
+
+export function buildApp(opts: AppOptions = {}) {
   const app = Fastify({
-    logger: {
-      transport:
-        process.env.NODE_ENV === 'production'
-          ? undefined
-          : { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' } },
-    },
+    logger:
+      opts.logger === false
+        ? false
+        : {
+            transport:
+              process.env.NODE_ENV === 'production'
+                ? undefined
+                : { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' } },
+          },
   }).withTypeProvider<ZodTypeProvider>();
 
   app.setValidatorCompiler(validatorCompiler);
@@ -33,7 +44,7 @@ export function buildApp() {
 
   app.register(deviceRoutes);
   app.register(settingsRoutes);
-  app.register(walkRoutes);
+  app.register(walkRoutes, { router: opts.router });
   app.register(savedRoutes);
   app.register(curiosityRoutes);
   app.register(geoRoutes);

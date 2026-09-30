@@ -9,6 +9,7 @@ import type {
   GeoSearchResponse,
   PlanWalkRequest,
   Place,
+  RerouteRequest,
   SavedCuriosity,
   Settings,
   UpdateSettings,
@@ -68,6 +69,16 @@ export const useStartWalk = () => useWalkLifecycle('start');
 export const usePauseWalk = () => useWalkLifecycle('pause');
 export const useResumeWalk = () => useWalkLifecycle('resume');
 export const useCompleteWalk = () => useWalkLifecycle('complete');
+
+/** Ask for a new route mid-walk (left the route / far from the start). 15 s timeout. */
+export function useReroute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ walkId, body }: { walkId: string; body: RerouteRequest }) =>
+      api.post<Walk>(`/walks/${walkId}/reroute`, body, { timeoutMs: 15_000 }),
+    onSuccess: (walk) => qc.setQueryData(qk.walk(walk.id), walk),
+  });
+}
 
 export function useMarkFound() {
   const qc = useQueryClient();

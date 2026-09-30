@@ -34,16 +34,36 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
+export type RequestOptions = {
+  /** Abort (and throw) if the server hasn't answered within this long. */
+  timeoutMs?: number;
+};
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  opts: RequestOptions = {},
+  retried = false,
+): Promise<T> {
   const hasBody = body !== undefined;
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers: {
-      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-    },
-    body: hasBody ? JSON.stringify(body) : undefined,
-  });
+  // AbortController + timer rather than AbortSignal.timeout(), which RN's polyfill may lack.
+  const controller = opts.timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), opts.timeoutMs) : null;
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers: {
+        ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      },
+      body: hasBody ? JSON.stringify(body) : undefined,
+      signal: controller?.signal,
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   const text = await res.text();
   const data = text ? JSON.parse(text) : undefined;
   if (!res.ok) {
@@ -52,7 +72,7 @@ async function request<T>(method: string, path: string, body?: unknown, retried 
     // and retries, instead of leaving every call 401ing forever.
     if (res.status === 401 && !retried && reauth && path !== '/devices') {
       await reauth();
-      return request<T>(method, path, body, true);
+      return request<T>(method, path, body, opts, true);
     }
     throw new ApiError(res.status, (data as { error?: string })?.error ?? `Request failed (${res.status})`);
   }
@@ -61,7 +81,8 @@ async function request<T>(method: string, path: string, body?: unknown, retried 
 
 export const api = {
   get: <T>(path: string) => request<T>('GET', path),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
+  post: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    request<T>('POST', path, body, opts),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   del: <T>(path: string) => request<T>('DELETE', path),
 };

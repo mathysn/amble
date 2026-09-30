@@ -37,9 +37,10 @@ type OrsStep = {
   instruction: string;
   name?: string;
   type?: number;
+  exit_number?: number;
   way_points: [number, number];
 };
-type OrsResponse = {
+export type OrsResponse = {
   features: {
     geometry: { type: 'LineString'; coordinates: [number, number][] };
     properties: {
@@ -48,6 +49,49 @@ type OrsResponse = {
     };
   }[];
 };
+
+/** ORS maneuver type for "arrive at the destination / a waypoint". */
+const ORS_ARRIVE = 10;
+
+/**
+ * Turn an ORS GeoJSON directions response into our route + steps.
+ *
+ * - Every leg ends in a zero-length "arrive" step. Only the **final** one is
+ *   kept (the walker's goal: home); arrivals at intermediate waypoints are
+ *   curiosities, which the app reveals by proximity instead of announcing.
+ * - Other zero-length steps are noise, except the very first (depart).
+ */
+export function parseOrsResponse(data: OrsResponse): RoutedPath {
+  const feature = data.features?.[0];
+  if (!feature || feature.geometry.coordinates.length < 2) throw new Error('ORS empty route');
+
+  const segments = feature.properties.segments ?? [];
+  const steps: RouteStep[] = [];
+  segments.forEach((segment, si) => {
+    const lastSegment = si === segments.length - 1;
+    for (const s of segment.steps ?? []) {
+      if (s.type === ORS_ARRIVE) {
+        if (!lastSegment) continue;
+      } else if (s.distance <= 0 && steps.length > 0) {
+        continue;
+      }
+      steps.push({
+        instruction: s.instruction,
+        distanceM: Math.round(s.distance),
+        wayName: s.name && s.name !== '-' ? s.name : null,
+        type: s.type ?? null,
+        startIndex: s.way_points[0],
+        ...(s.exit_number != null ? { exitNumber: s.exit_number } : {}),
+      });
+    }
+  });
+
+  return {
+    geometry: feature.geometry,
+    steps,
+    distanceM: Math.round(feature.properties.summary?.distance ?? 0),
+  };
+}
 
 async function post(body: unknown): Promise<RoutedPath> {
   if (!ORS.apiKey) throw new Error('ORS_API_KEY not set');
@@ -63,30 +107,7 @@ async function post(body: unknown): Promise<RoutedPath> {
     signal: AbortSignal.timeout(12_000),
   });
   if (!res.ok) throw new Error(`ORS ${res.status}`);
-  const data = (await res.json()) as OrsResponse;
-  const feature = data.features?.[0];
-  if (!feature || feature.geometry.coordinates.length < 2) throw new Error('ORS empty route');
-
-  const steps: RouteStep[] = [];
-  for (const segment of feature.properties.segments ?? []) {
-    for (const s of segment.steps ?? []) {
-      // The last step of each leg is a zero-length "arrive" — skip the noise.
-      if (s.distance <= 0 && steps.length > 0) continue;
-      steps.push({
-        instruction: s.instruction,
-        distanceM: Math.round(s.distance),
-        wayName: s.name && s.name !== '-' ? s.name : null,
-        type: s.type ?? null,
-        startIndex: s.way_points[0],
-      });
-    }
-  }
-
-  return {
-    geometry: feature.geometry,
-    steps,
-    distanceM: Math.round(feature.properties.summary?.distance ?? 0),
-  };
+  return parseOrsResponse((await res.json()) as OrsResponse);
 }
 
 export const orsRouter: Router = {

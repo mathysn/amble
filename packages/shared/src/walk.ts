@@ -24,8 +24,32 @@ export const RouteStepSchema = z.object({
   type: z.number().nullable(),
   /** index into the route's `coordinates` where this step begins. */
   startIndex: z.number().int(),
+  /** Roundabout exit to take (ORS `exit_number`). Optional: older stored walks lack it. */
+  exitNumber: z.number().int().optional(),
 });
 export type RouteStep = z.infer<typeof RouteStepSchema>;
+
+/**
+ * How to reroute a walk in progress:
+ * - `rejoin`: the walker left the route — go from here through the curiosities
+ *   still ahead, back to the start (keeping the part already walked).
+ * - `approach`: the walker hasn't reached the start yet (e.g. an address chosen
+ *   far away) — get them to the start, then follow the original route.
+ */
+export const RerouteStrategySchema = z.enum(['rejoin', 'approach']);
+export type RerouteStrategy = z.infer<typeof RerouteStrategySchema>;
+
+/** POST /walks/:id/reroute */
+export const RerouteRequestSchema = z.object({
+  lat: CoordSchema.shape.lat,
+  lng: CoordSchema.shape.lng,
+  strategy: RerouteStrategySchema,
+  /** Last route vertex the walker was on; everything up to it is kept as walked. */
+  fromIndex: z.number().int().min(0).optional(),
+  /** Length of the route the client is navigating — a stale route gets a 409. */
+  coordsCount: z.number().int().min(2),
+});
+export type RerouteRequest = z.infer<typeof RerouteRequestSchema>;
 
 /** How the route was produced: real streets through stops, a real loop, or a stylized fallback. */
 export const RouteSourceSchema = z.enum(['through', 'loop', 'synthetic']);
