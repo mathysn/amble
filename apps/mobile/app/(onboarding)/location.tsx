@@ -1,38 +1,23 @@
-import { useState } from 'react';
 import { Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Screen } from '../../src/components/Screen';
 import { Button } from '../../src/components/Button';
 import { PinIcon } from '../../src/components/icons';
 import { Serif } from '../../src/components/typography';
-import { requestLocation } from '../../src/lib/location';
-import { reverseGeocode } from '../../src/api/hooks';
 import { useStartPoint } from '../../src/store/startPoint';
 import { setOnboarded } from '../../src/lib/storage';
 
 /** 02 · Location — ask for permission (or offer manual address). */
 export default function LocationPermission() {
   const router = useRouter();
-  const setStart = useStartPoint((s) => s.setStart);
-  const [loading, setLoading] = useState(false);
+  const locate = useStartPoint((s) => s.locate);
 
+  // Carry on straight away: Set off shows "Finding your location…" while the
+  // permission prompt and first fix finish.
   const allow = async () => {
-    setLoading(true);
-    try {
-      const res = await requestLocation();
-      if (res.granted && res.coord) {
-        try {
-          const place = await reverseGeocode(res.coord.lat, res.coord.lng);
-          setStart(res.coord, place.label, place.detail);
-        } catch {
-          setStart(res.coord, 'Current location');
-        }
-      }
-    } finally {
-      setLoading(false);
-      await setOnboarded();
-      router.replace('/(tabs)');
-    }
+    void locate({ ask: true });
+    await setOnboarded();
+    router.replace('/(tabs)');
   };
 
   const manual = async () => {
@@ -54,8 +39,8 @@ export default function LocationPermission() {
         </Text>
       </View>
 
-      <Button label="Allow location" variant="sage" loading={loading} onPress={allow} />
-      <Button label="Enter an address instead" variant="outline" className="mt-3" onPress={manual} />
+      <Button label="Allow location" variant="sage" onPress={allow} />
+      <Button label="Enter an address instead" variant="secondary" className="mt-3" onPress={manual} />
     </Screen>
   );
 }

@@ -8,7 +8,18 @@
 /** Fixes worse than this only move the puck; they never change progress or off-route. */
 export const MAX_ACCURACY_M = 40;
 /** Snap the puck onto the route only when on-route and at least this accurate. */
-export const SNAP_ACCURACY_M = 25;
+export const SNAP_ACCURACY_M = 35;
+/** The snapped puck ignores backward steps smaller than this (GPS jitter), so it
+ *  doesn't shuffle back and forth along the street. Progress is unaffected. */
+export const DISPLAY_BACKSTEP_M = 8;
+
+// ── fix smoothing (fixFilter) ────────────────────────────────────────────
+/** How sharply a walker changes speed or direction — the filter's process noise. */
+export const FILTER_ACCEL_MPS2 = 0.4;
+/** A reading this much faster than walking from the smoothed position is a glitch… */
+export const OUTLIER_MPS = 6;
+/** …unless this many in a row have been dropped: then the walker really moved. */
+export const OUTLIER_MAX_REJECTS = 2;
 /** Proximity reveals only trust fixes at least this accurate. */
 export const REVEAL_ACCURACY_M = 50;
 

@@ -135,3 +135,25 @@ export function ChevronRightIcon({ size = 14, color = colors.ink40 }: IconProps)
     </Svg>
   );
 }
+
+/** Two crossing arrows — reshuffle the route. */
+export function ShuffleIcon({ size = 18, color = colors.ink }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20" fill="none">
+      <Path
+        d="M3 6.5h2.5c3.5 0 4.5 7 8 7H17M15 11.5l2 2-2 2"
+        stroke={color}
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path
+        d="M3 13.5h2.5c1.4 0 2.4-1.2 3.2-2.7M11.3 9.2c.8-1.5 1.8-2.7 3.2-2.7H17M15 4.5l2 2-2 2"
+        stroke={color}
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}

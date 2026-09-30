@@ -2,22 +2,45 @@ import * as Location from 'expo-location';
 import type { Coord } from '@amble/shared';
 import type { Fix } from './nav';
 
-export type LocationResult = { granted: boolean; coord?: Coord };
+export type LocateResult =
+  | { status: 'ok'; coord: Coord }
+  | { status: 'denied' }
+  | { status: 'failed' };
 
-/** Ask for foreground permission and read a single position. */
-export async function requestLocation(): Promise<LocationResult> {
-  const { status } = await Location.requestForegroundPermissionsAsync();
-  if (status !== 'granted') return { granted: false };
-  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-  return { granted: true, coord: { lat: pos.coords.latitude, lng: pos.coords.longitude } };
-}
+/** How long to wait for a fresh fix before giving up (the walker can pick an address). */
+const LOCATE_TIMEOUT_MS = 15_000;
 
-/** Read the current position only if permission was already granted. */
-export async function getCurrentIfGranted(): Promise<Coord | null> {
-  const { status } = await Location.getForegroundPermissionsAsync();
-  if (status !== 'granted') return null;
-  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-  return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+/**
+ * Find where the walker is, once: a recent last-known position if the phone has
+ * one (instant), else a fresh fix (a few seconds, up to LOCATE_TIMEOUT_MS).
+ * `ask` requests permission if it hasn't been granted; otherwise a missing
+ * permission is just `denied`. Never throws.
+ */
+export async function locateOnce({ ask = false }: { ask?: boolean } = {}): Promise<LocateResult> {
+  try {
+    const perm = ask
+      ? await Location.requestForegroundPermissionsAsync()
+      : await Location.getForegroundPermissionsAsync();
+    if (perm.status !== 'granted') return { status: 'denied' };
+
+    const toCoord = (p: Location.LocationObject): LocateResult => ({
+      status: 'ok',
+      coord: { lat: p.coords.latitude, lng: p.coords.longitude },
+    });
+    const recent = await Location.getLastKnownPositionAsync({
+      maxAge: 2 * 60_000,
+      requiredAccuracy: 100,
+    }).catch(() => null);
+    if (recent) return toCoord(recent);
+
+    const fresh = await Promise.race([
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), LOCATE_TIMEOUT_MS)),
+    ]);
+    return fresh ? toCoord(fresh) : { status: 'failed' };
+  } catch {
+    return { status: 'failed' };
+  }
 }
 
 type Unsubscribe = () => void;

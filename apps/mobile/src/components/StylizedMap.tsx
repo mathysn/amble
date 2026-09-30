@@ -10,6 +10,8 @@ type Stop = { lat: number; lng: number; found?: boolean };
 type Props = {
   route: RouteGeometry;
   start: Coord;
+  /** Where an A→B walk finishes; omitted for a loop. */
+  end?: Coord | null;
   stops?: Stop[];
   position?: Coord | null;
   /** fill the parent (flex-1) instead of using a fixed height */
@@ -26,6 +28,7 @@ type Props = {
 export function StylizedMap({
   route,
   start,
+  end = null,
   stops = [],
   position,
   fill = false,
@@ -45,6 +48,7 @@ export function StylizedMap({
     : { project: (_: Coord) => ({ x: 0, y: 0 }) };
   const d = ready ? smoothPath(route.coordinates.map((c) => project({ lng: c[0]!, lat: c[1]! }))) : '';
   const startPt = project(start);
+  const endPt = end ? project(end) : null;
   const posPt = position ? project(position) : null;
 
   return (
@@ -66,6 +70,18 @@ export function StylizedMap({
 
           {/* start / home */}
           <Circle cx={startPt.x} cy={startPt.y} r={7} fill={colors.ink} />
+
+          {/* finish, for an A→B walk */}
+          {endPt && (
+            <Circle
+              cx={endPt.x}
+              cy={endPt.y}
+              r={7}
+              fill={colors.sageDark}
+              stroke={colors.paperRaised}
+              strokeWidth={3}
+            />
+          )}
 
           {/* curiosity stops */}
           {stops.map((s, i) => {

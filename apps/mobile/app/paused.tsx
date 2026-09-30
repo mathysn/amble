@@ -54,7 +54,7 @@ export default function Paused() {
           {formatClock(elapsedMs)} elapsed · {minutesLeft} min and {left} {left === 1 ? 'curiosity' : 'curiosities'} left
         </Text>
         <Button label="Resume walking" variant="sage" className="mt-6" onPress={onResume} />
-        <Button label="End walk here" variant="outline" className="mt-3" onPress={onEnd} />
+        <Button label="End walk here" variant="secondary" className="mt-3" onPress={onEnd} />
       </View>
     </View>
   );

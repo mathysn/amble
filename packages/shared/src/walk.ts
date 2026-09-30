@@ -7,12 +7,21 @@ import {
 } from './common';
 import { WalkCuriositySchema } from './curiosity';
 
+/** Where an A→B wander finishes (omitted: it loops back to the start). */
+export const WalkEndSchema = z.object({
+  lat: CoordSchema.shape.lat,
+  lng: CoordSchema.shape.lng,
+  label: z.string().max(200).optional(),
+});
+export type WalkEnd = z.infer<typeof WalkEndSchema>;
+
 /** POST /walks/plan — ask Amble to build a wander. */
 export const PlanWalkRequestSchema = z.object({
   lat: CoordSchema.shape.lat,
   lng: CoordSchema.shape.lng,
   minutes: z.number().int().positive(),
   categories: z.array(CategorySchema).min(1),
+  end: WalkEndSchema.optional(),
 });
 export type PlanWalkRequest = z.infer<typeof PlanWalkRequestSchema>;
 
@@ -60,6 +69,10 @@ export const WalkSchema = z.object({
   status: WalkStatusSchema,
   startLat: z.number(),
   startLng: z.number(),
+  /** Set for an A→B wander; null when it loops back to the start. */
+  endLat: z.number().nullable(),
+  endLng: z.number().nullable(),
+  endLabel: z.string().nullable(),
   plannedMinutes: z.number().int(),
   distanceKm: z.number(),
   startedAt: z.string().nullable(),
@@ -71,6 +84,20 @@ export const WalkSchema = z.object({
   curiosities: z.array(WalkCuriositySchema),
 });
 export type Walk = z.infer<typeof WalkSchema>;
+
+/** Where the walk finishes: its end point, or back at the start for a loop. */
+export function walkEnd(w: Pick<Walk, 'startLat' | 'startLng' | 'endLat' | 'endLng'>): {
+  lat: number;
+  lng: number;
+} {
+  return w.endLat !== null && w.endLng !== null
+    ? { lat: w.endLat, lng: w.endLng }
+    : { lat: w.startLat, lng: w.startLng };
+}
+
+/** True when the walk loops back to where it started. */
+export const isRoundTrip = (w: Pick<Walk, 'endLat' | 'endLng'>) =>
+  w.endLat === null || w.endLng === null;
 
 /** A row in the "past wanders" list — summary only. */
 export const WalkSummarySchema = z.object({

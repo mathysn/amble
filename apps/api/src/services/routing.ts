@@ -13,10 +13,20 @@ export type RoutedPath = {
   geometry: RouteGeometry;
   steps: RouteStep[];
   distanceM: number;
+  /** Index into `geometry.coordinates` of each requested waypoint (ORS `way_points`). */
+  waypointIndices?: number[];
+};
+
+/** A GeoJSON polygon ring set: `[outer ring]`, each ring `[lng, lat][]`, closed. */
+export type Polygon = [number, number][][];
+
+export type RouteOptions = {
+  /** Areas the route must not pass through (streets already walked). */
+  avoid?: Polygon[];
 };
 
 export type Router = {
-  routeThrough: (coords: Coord[]) => Promise<RoutedPath>;
+  routeThrough: (coords: Coord[], opts?: RouteOptions) => Promise<RoutedPath>;
   roundTrip: (start: Coord, targetM: number, seed: number) => Promise<RoutedPath>;
 };
 
@@ -45,6 +55,7 @@ export type OrsResponse = {
     geometry: { type: 'LineString'; coordinates: [number, number][] };
     properties: {
       summary?: { distance?: number };
+      way_points?: number[];
       segments: { steps: OrsStep[] }[];
     };
   }[];
@@ -90,6 +101,7 @@ export function parseOrsResponse(data: OrsResponse): RoutedPath {
     geometry: feature.geometry,
     steps,
     distanceM: Math.round(feature.properties.summary?.distance ?? 0),
+    ...(feature.properties.way_points ? { waypointIndices: feature.properties.way_points } : {}),
   };
 }
 
@@ -110,11 +122,27 @@ async function post(body: unknown): Promise<RoutedPath> {
   return parseOrsResponse((await res.json()) as OrsResponse);
 }
 
+/** Small stable hash for cache keys (FNV-1a). */
+function hash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
 export const orsRouter: Router = {
-  routeThrough(coords) {
-    const key = `through:${coords.map((c) => `${c.lat.toFixed(4)},${c.lng.toFixed(4)}`).join(';')}`;
+  routeThrough(coords, opts = {}) {
+    const avoid = opts.avoid?.length ? opts.avoid : null;
+    const avoidJson = avoid ? JSON.stringify(avoid) : '';
+    const key = `through:${coords.map((c) => `${c.lat.toFixed(4)},${c.lng.toFixed(4)}`).join(';')}:${avoid ? hash(avoidJson) : '-'}`;
     return cached(key, () =>
-      post({ coordinates: coords.map((c) => [c.lng, c.lat]), instructions: true }),
+      post({
+        coordinates: coords.map((c) => [c.lng, c.lat]),
+        instructions: true,
+        ...(avoid ? { options: { avoid_polygons: { type: 'MultiPolygon', coordinates: avoid } } } : {}),
+      }),
     );
   },
   roundTrip(start, targetM, seed) {

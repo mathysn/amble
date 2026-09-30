@@ -19,6 +19,7 @@ export function LandmarkRow({
   return (
     <Pressable
       onPress={onPress}
+      disabled={!onPress}
       className={`flex-row items-center gap-3.5 px-1.5 py-3.5 ${last ? '' : 'border-b border-ink/[0.09]'}`}
     >
       <Serif className="w-4 text-[13px] text-sage">{order}</Serif>

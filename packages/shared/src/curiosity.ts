@@ -24,6 +24,20 @@ export const WalkCuriositySchema = CuriositySchema.extend({
 });
 export type WalkCuriosity = z.infer<typeof WalkCuriositySchema>;
 
+/** GET /curiosities/:id/details — the fuller story, fetched when it's revealed. */
+export const CuriosityDetailsSchema = z.object({
+  imageUrl: z.string().nullable(),
+  /** Who to credit for the photo, e.g. "Wikimedia Commons". */
+  imageCredit: z.string().nullable(),
+  /** A short encyclopedia summary, when the place has one. */
+  summary: z.string().nullable(),
+  /** Where the summary comes from (to read more). */
+  sourceUrl: z.string().nullable(),
+  /** Small labelled facts from its map data: built, artist, opening hours… */
+  facts: z.array(z.object({ label: z.string(), value: z.string() })),
+});
+export type CuriosityDetails = z.infer<typeof CuriosityDetailsSchema>;
+
 export const SavedCuriositySchema = CuriositySchema.extend({
   savedAt: z.string(),
 });

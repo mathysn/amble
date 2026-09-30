@@ -1,26 +1,38 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { Place } from '@amble/shared';
 import { Screen } from '../src/components/Screen';
-import { PinSmallIcon, ChevronLeftIcon } from '../src/components/icons';
+import { PinSmallIcon, ChevronLeftIcon, RecenterIcon } from '../src/components/icons';
 import { Overline } from '../src/components/typography';
 import { useGeoSearch } from '../src/api/hooks';
 import { useStartPoint } from '../src/store/startPoint';
 import { useDebouncedValue } from '../src/lib/useDebouncedValue';
 import { colors } from '../src/theme';
 
-/** 13 · Enter address — manual starting point via Nominatim search. */
+/**
+ * 13 · Enter address — pick a starting point (or, with `?for=end`, where an
+ * A→B walk finishes) via Nominatim search.
+ */
 export default function Address() {
   const router = useRouter();
+  const forEnd = useLocalSearchParams<{ for?: string }>().for === 'end';
   const [query, setQuery] = useState('');
   // Nominatim allows ~1 request/sec — only search once typing pauses, not per keystroke.
   const debouncedQuery = useDebouncedValue(query, 450);
   const { data, isFetching, error } = useGeoSearch(debouncedQuery);
   const setStart = useStartPoint((s) => s.setStart);
+  const setEnd = useStartPoint((s) => s.setEnd);
+  const locate = useStartPoint((s) => s.locate);
 
   const choose = (p: Place) => {
-    setStart({ lat: p.lat, lng: p.lng }, p.label, p.detail);
+    const coord = { lat: p.lat, lng: p.lng };
+    if (forEnd) setEnd({ coord, label: p.label, detail: p.detail });
+    else setStart(coord, p.label, p.detail);
+    router.back();
+  };
+  const useMyLocation = () => {
+    void locate({ ask: true });
     router.back();
   };
 
@@ -36,7 +48,9 @@ export default function Address() {
         >
           <ChevronLeftIcon />
         </Pressable>
-        <Text className="font-sans-medium text-[15px] text-ink">Starting point</Text>
+        <Text className="font-sans-medium text-[15px] text-ink">
+          {forEnd ? 'Where to finish' : 'Starting point'}
+        </Text>
       </View>
 
       <Overline className="mb-3 mt-7">Enter an address</Overline>
@@ -57,6 +71,15 @@ export default function Address() {
       </View>
 
       <ScrollView keyboardShouldPersistTaps="handled" className="mt-2">
+        {!forEnd && (
+          <Pressable
+            onPress={useMyLocation}
+            className="flex-row items-center gap-3.5 border-b border-ink/[0.08] px-2 py-3.5"
+          >
+            <RecenterIcon size={16} color={colors.sageDark} />
+            <Text className="font-sans-semibold text-[15px] text-sage-dark">Use my location</Text>
+          </Pressable>
+        )}
         {results.map((p, i) => (
           <Pressable
             key={`${p.lat},${p.lng},${i}`}

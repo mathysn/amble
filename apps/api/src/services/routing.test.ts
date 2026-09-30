@@ -17,6 +17,7 @@ const fixture: OrsResponse = {
       },
       properties: {
         summary: { distance: 412.6 },
+        way_points: [0, 2, 4],
         segments: [
           {
             steps: [
@@ -40,12 +41,16 @@ const fixture: OrsResponse = {
 };
 
 describe('parseOrsResponse', () => {
-  const { steps, geometry, distanceM } = parseOrsResponse(fixture);
+  const { steps, geometry, distanceM, waypointIndices } = parseOrsResponse(fixture);
 
   it('keeps geometry and rounds distances', () => {
     expect(geometry.coordinates).toHaveLength(5);
     expect(distanceM).toBe(413);
     expect(steps.find((s) => s.type === 1)!.distanceM).toBe(180);
+  });
+
+  it('keeps where each waypoint lands on the route', () => {
+    expect(waypointIndices).toEqual([0, 2, 4]);
   });
 
   it('keeps the first (depart) step even at zero length', () => {

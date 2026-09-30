@@ -8,8 +8,9 @@
 
 ## What Amble is
 
-A mobile app for **walks that go nowhere in particular**. The user picks how long they have and where
-they start; Amble returns a loop that ends where it began, guides them round it with **turn-by-turn
+A mobile app for **walks that go nowhere in particular**. The user picks a length (Stroll / Wander /
+Roam) and where they start — and either loops back or picks somewhere to finish; Amble returns a
+route that never walks the same street twice if it can help it, guides them along it with **turn-by-turn
 navigation** (a heading-up map in Amble's own palette, voice and haptic cues, automatic rerouting),
 and **reveals curiosities** (niche, hidden and scenic places from OpenStreetMap) one at a time as the
 walker gets close. The design comes from a 17-screen Claude Design project: warm paper, soft sage
@@ -82,33 +83,65 @@ Mobile: `EXPO_PUBLIC_API_URL` overrides the API base; otherwise it's the Metro h
   `POST /walks/plan` · `POST /walks/:id/{reshuffle,start,pause,resume,complete}` ·
   `POST /walks/:id/reroute` · `POST /walks/:id/curiosities/:cid/found` · `GET /walks` (excludes
   `planned`) · `GET /walks/:id` · `GET|POST /saved`, `DELETE /saved/:curiosityId` ·
-  `GET /curiosities/:id` · `GET /geo/search?q=`, `GET /geo/reverse?lat=&lng=`.
+  `GET /curiosities/:id` · `GET /curiosities/:id/details` · `GET /geo/search?q=`,
+  `GET /geo/reverse?lat=&lng=`.
   Errors: `reply.code(n).send({ error })`.
 - **Prisma** (`prisma/schema.prisma`, SQLite): `Device`, `Settings`, `Curiosity`, `Walk`,
   `WalkCuriosity`, `SavedCuriosity`. Enum-like fields are `String` (validated by shared Zod); JSON is
-  stored as strings (`Walk.routeGeoJson`, `Walk.stepsJson`, `Curiosity.meta`). DTO mapping lives in
-  `lib/serialize.ts` (`toWalk`, `toCuriosity`, …).
-- **Planning never fails** (`services/route.ts` `generateWander`): picks 2–5 stops
-  (`stopCount = clamp(round(min/12), 2, 5)`) around the ideal radius `target/2π`, then
-  1. `'through'` — ORS route start → stops → start;
-  2. `'loop'` — no stops: ORS round trip of the target length, attaching curiosities within 80 m;
-  3. `'synthetic'` — any router error: a stylized bowed loop with **no steps**.
-  Target metres = `minutes × PACE_METRES_PER_MIN[pace]`.
+  stored as strings (`Walk.routeGeoJson`, `Walk.stepsJson`, `Curiosity.meta` = raw OSM tags,
+  `Curiosity.detailsJson` + `detailsAt`). `Walk.endLat/endLng/endLabel` are null for a loop. DTO
+  mapping lives in `lib/serialize.ts` (`toWalk`, `toCuriosity`, …).
+- **Planning never fails** (`services/route.ts` `generateWander({ start, end?, minutes, … })`):
+  target metres = `minutes × PACE_METRES_PER_MIN[pace]`; with an `end` (> `MIN_END_M` = 150 m away,
+  else it's a loop) it's `max(direct × 1.15, that)`, so the length decides how much to wander.
+  - Stops (2–5, `stopCount = clamp(round(min/12), 2, 5)`): a **loop** takes curiosities near the ideal
+    radius `target/2π`, spread round the compass and ordered by bearing; an **A→B** walk takes them
+    from an ellipse with the two ends as foci (`d(s,c)+d(c,e) ≤ target/1.25`), one per stretch of
+    the start→end axis, ordered along it.
+  - **Never the same street twice** (`services/legs.ts` `routeLegs`): the route is asked for one leg
+    at a time, each with ORS `avoid_polygons` = thin strips (~10 m half-width, ≤ 150 of them) along
+    every street used so far, lifted within `LEG_EXCLUDE_M` = 60 m of that leg's own ends. A leg that
+    can't be routed that way (dead end, only bridge) is retried without avoidance. `joinLegs` stitches
+    legs into one path (one arrive step, `waypointIndices` rebuilt). `reusedFraction` measures reuse
+    in tests.
+  1. `'through'` — legs start → stops → finish. **No out-and-backs** (`services/spurs.ts`): where the
+     route still doubles back around a stop (a curiosity up a side street), its waypoint becomes the
+     spur's junction if the curiosity is within `SPUR_REACH_M = 45`, else the stop is dropped; then
+     one re-route (on failure the first route is kept). All stops dropped → 2;
+  2. `'loop'` — no stops: legs round a ring of 3 made-up waypoints (loop; ORS `round_trip` if that
+     fails), or via one point off to the side when an A→B walk has distance to spare; curiosities
+     within 45 m of the result are attached (within the app's 60 m reveal radius);
+  3. `'synthetic'` — any router error: stylized bowed lines through the stops to the finish, **no
+     steps**.
+  The walk routes search curiosities round the start (loop) or the start–end midpoint (A→B).
 - **Routing** (`services/routing.ts`): ORS `foot-walking` GeoJSON, `instructions: true`, 12 s timeout,
-  10-min in-memory cache; throws on anything so callers can fall back. `parseOrsResponse` (pure) maps
+  10-min in-memory cache (keyed on the waypoints + a hash of any `avoid` polygons); throws on
+  anything so callers can fall back. `routeThrough(coords, { avoid? })` sends `avoid` as
+  `options.avoid_polygons`. `parseOrsResponse` (pure) maps
   steps to `RouteStep { instruction, distanceM, wayName, type, startIndex, exitNumber? }` (ORS type
-  codes 0–13). It keeps the **final arrive step** (type 10) but drops arrivals at intermediate
+  codes 0–13) and keeps ORS `way_points` as `waypointIndices` (where each waypoint lands on the
+  geometry; spur detection needs it). It keeps the **final arrive step** (type 10) but drops arrivals at intermediate
   waypoints (those are curiosities, revealed by proximity instead), and drops other zero-length steps.
 - **Rerouting** (`services/reroute.ts` `planReroute`, `POST /walks/:id/reroute`):
-  - `rejoin` — keep the walked prefix `coords[0..fromIndex]`, then route from the walker through the
-    unfound curiosities still ahead (by ordered position along the route) back to the start; steps
-    are shifted past the prefix and `distanceKm` recomputed.
+  - `rejoin` — keep the walked prefix `coords[0..fromIndex]`, then route (leg by leg, avoiding the
+    walked prefix) from the walker through the unfound curiosities still ahead (by ordered position
+    along the route) to the finish (`walkEnd`: the end point, or the start for a loop); steps are
+    shifted past the prefix and `distanceKm` recomputed. Side-street curiosities within reach
+    are passed at their junction, as in planning (stored stops can't be dropped, so far ones keep
+    their out-and-back).
   - `approach` — route from the walker to the start, then the original route (for an address start
     far away).
   - A synthetic walk is always re-planned from here (becomes `'through'`).
   - 409 if the walk isn't `active` or `coordsCount` doesn't match the stored route (stale client);
     429 from a per-walk 10 s in-memory throttle; 503 (`RoutingUnavailableError`) when routing fails,
     leaving the walk untouched.
+- **Curiosity details** (`services/curiosityDetails.ts` `fetchCuriosityDetails`,
+  `GET /curiosities/:id/details`): facts from OSM tags (built, architect, artist, inscription,
+  listed, opening hours, website…), plus Wikipedia's REST page summary (text, photo, link) via the
+  `wikipedia` tag or `wikidata` → enwiki sitelink; photo fallbacks: Wikidata P18, then
+  `wikimedia_commons` / `image` tags (Commons `Special:FilePath?width=1000`). 6 s timeouts, fails
+  soft to facts only. Stored on the `Curiosity` row, refreshed after 30 days. One entry point, so
+  another source can be added later.
 - **OSM** (`services/osm.ts`, `services/curiosityStore.ts`): Overpass for curiosities (per-category tag
   filters, retry once, 10-min cache), upserted into `Curiosity` by `osmId`; queries always read back
   from the DB so seeded/cached rows count. Nominatim geocoding is throttled to ≥1.1 s between calls;
@@ -120,9 +153,13 @@ Mobile: `EXPO_PUBLIC_API_URL` overrides the API base; otherwise it's the Metro h
 
 ## Shared contract (`packages/shared`)
 
-- `common.ts` (enums `Category`/`Pace`/`Units`/`WalkStatus`, `PACE_METRES_PER_MIN`, `WALK_LENGTHS`,
-  `Coord`, `RouteGeometry`), `walk.ts` (`PlanWalkRequest`, `RouteStep`, `RerouteRequest`/`Strategy`,
-  `Walk`, summaries), `curiosity.ts`, `settings.ts` (`DEFAULT_SETTINGS`), `device.ts`, `geo.ts`.
+- `common.ts` (enums `Category`/`Pace`/`Units`/`WalkStatus`, `PACE_METRES_PER_MIN`, `Coord`,
+  `RouteGeometry`, `WALK_LENGTHS` = named lengths Stroll / Wander / Roam (20 / 40 / 65 min; the app
+  never shows the minutes) + `lengthFor(minutes)` (nearest, so old 15/30/45/60 values still map)),
+  `walk.ts` (`PlanWalkRequest` with optional `end { lat, lng, label? }`, `RouteStep`,
+  `RerouteRequest`/`Strategy`, `Walk` with nullable `endLat/endLng/endLabel`, `walkEnd()`,
+  `isRoundTrip()`, summaries), `curiosity.ts` (incl. `CuriosityDetails`), `settings.ts`
+  (`DEFAULT_SETTINGS`, default length 40), `device.ts`, `geo.ts`.
 - Naming: `XSchema` + `type X = z.infer<typeof XSchema>`.
 - Consumed as **raw TS** (`main`/`exports` → `src/index.ts`): the API via tsx, mobile via Metro
   (`metro.config.js` `watchFolders` = workspace root). **Imports inside shared must be
@@ -139,11 +176,27 @@ mockup number):
 - `_layout.tsx` — loads fonts, bootstraps the device token (retries with backoff), QueryClient
   (`retry 1`, `staleTime 30s`), Stack. `address` is a modal; `discovery`, `paused`, `end-walk` are
   `transparentModal`s (the walk screen underneath stays mounted).
-- `index.tsx` gate → `(onboarding)/welcome` → `(onboarding)/location` (permission + reverse geocode)
-  → `(tabs)`: `index` (Set off: length, start point, categories), `saved`, `wanders`, `settings`.
-- Walk flow: `walk/finding` (plans) → `walk/route` (preview map, reshuffle, directions) →
-  `walk/active` (navigation) → `discovery` modal on reveal → `paused` / `end-walk` → `walk/complete`.
-- Others: `address` (debounced Nominatim search), `curiosity/[id]`.
+- `index.tsx` gate → `(onboarding)/welcome` → `(onboarding)/location` (asks permission, then carries
+  on while locating) → `(tabs)`: `index` (Set off: named length chips, start point card with a
+  pulsing "Finding your location…" state, **Ending** = Back here | Somewhere else (+ end point card),
+  categories), `saved`, `wanders`, `settings` (segmented controls for length / pace / units,
+  optimistic updates).
+- Walk flow: `walk/finding` (plans, passing `end`) → `walk/route` (preview: "A wander, looping home" /
+  "A stroll to X", reshuffle, directions; curiosity **names only, not tappable**) → `walk/active`
+  (navigation; the expanded sheet lists **Found so far**, which open `curiosity/[id]`) → `discovery`
+  on reveal → `paused` / `end-walk` → `walk/complete` (only **found** curiosities, with thumbnails,
+  tappable; missed ones are a count — "2 more slipped by"). Loop vs A→B wording ("Home again" / "You
+  made it to X", banner, voice) follows `isRoundTrip(walk)`.
+- `discovery` is the **only** way to see an unfound curiosity: it opens by proximity alone, once,
+  shows the curiosity in full (`components/CuriosityView`, shared with `curiosity/[id]`: photo with
+  credit, blurb, "From Wikipedia" summary + Read more, "Good to know" facts, via
+  `useCuriosityDetails`),
+  records the find on open (`useMarkFound`) and has a footer bookmark icon button (save) + "Keep
+  wandering" (no buttons over the photo; `curiosity/[id]` keeps only a back arrow there). Nothing on the walk
+  screen opens one early.
+- Others: `address` (debounced Nominatim search; `?for=end` picks the finish; "Use my location"
+  re-locates the start), `curiosity/[id]` (already-found places: Saved, the walk's Found so far,
+  the complete screen).
 
 **Data**: `src/api/client.ts` (fetch wrapper, bearer token, `ApiError`, optional `timeoutMs` via
 AbortController, one-shot 401 self-heal via `setReauthHandler`), `src/api/device.ts`
@@ -151,7 +204,9 @@ AbortController, one-shot 401 self-heal via `setReauthHandler`), `src/api/device
 `useReroute` write the returned `Walk` into `qk.walk(id)` with `setQueryData`). Responses are typed
 with shared types but **not Zod-parsed** on the client.
 
-**State** (Zustand): `store/startPoint.ts`; `store/walkSession.ts` (`walkId`, the latest real GPS
+**State** (Zustand): `store/startPoint.ts` (start point + `status` idle/locating/naming/ready/denied/
+failed, `locate({ ask? })` via `lib/location.ts` `locateOnce` (last-known fix, else a fresh one
+within 15 s), and the optional `end`); `store/walkSession.ts` (`walkId`, the latest real GPS
 `fix`, `revealedIds` — deliberately no assumed position before the first fix);
 `store/navPrefs.ts` (`muted`, `threeD`, persisted in SecureStore via `lib/storage.ts`).
 
@@ -161,7 +216,9 @@ with shared types but **not Zod-parsed** on the client.
   `buildAmbleStyle()` (`lib/map/style.ts`): Amble's own style on **OpenFreeMap** vector tiles (free,
   no key; source = TileJSON `tiles.openfreemap.org/planet`, never the versioned tile URL). Includes
   a toggleable `building-3d` fill-extrusion, and our own sources `route-walked` (dotted),
-  `route-remaining` (solid sage + casing) and `stops` (`state`: start/next/unfound/found).
+  `route-remaining` (solid sage + casing, with `route-arrows` chevrons along it showing the way
+  round the loop) and `stops` (`state`: start/end/next/unfound/found). The style has no sprite: the
+  page draws the chevron (`ROUTE_ARROW_IMAGE`) on `styleimagemissing`.
 - `lib/map/html.ts` builds the page: the style and starting camera are embedded; a small runtime
   (a **plain ES2017 string**, see gotchas) handles messages, the walker puck (one DOM marker lying on
   the map: accuracy halo, heading cone, dot), the follow camera, overview fit, 3D, gesture detection
@@ -183,18 +240,26 @@ with shared types but **not Zod-parsed** on the client.
   - `routeIndex` — flat local projection, cumulative distances, steps placed along the route (adds a
     virtual arrive step for older walks), `locate()` with tie-breaks for routes that pass the same
     spot twice (`expectAlongM`: closest to where the walker should be; `preferAtLeastM`: earliest).
+  - `fixFilter` — raw GPS → smoothed fix: per-axis constant-velocity Kalman in local metres
+    (accuracy² as measurement noise, `FILTER_ACCEL_MPS2` process noise), drops readings implying
+    > `OUTLIER_MPS` unless `OUTLIER_MAX_REJECTS` in a row agree, restarts after `GAP_MS`. Passes
+    the raw accuracy through, so downstream thresholds are unchanged.
   - `tracker` — fix → state: monotonic progress in a window around the last position, off-route
     hysteresis (> 35 m for ≥ 3 fixes over ≥ 6 s; back < 20 m), joining the route wherever the walker
     first meets it (start, or mid-route after a reload), approach detection, arrival (≤ 25 m left);
+    the puck snaps to the route when on it and ≤ `SNAP_ACCURACY_M` (35 m), and the snapped puck
+    ignores backward steps under `DISPLAY_BACKSTEP_M` (8 m, display only);
     `navView()` gives current step, next maneuver, distance to it, remaining distance.
-  - `announcer` + `phrases` — Amble's wording from ORS type codes; "start", "prepare" (~60 m, long
+  - `announcer` + `phrases` — Amble's wording from ORS type codes (`roundTrip: false` makes arriving
+    "You've arrived" instead of "back where you started"); "start", "prepare" (~60 m, long
     steps only) and "now" (~15 m) cues once each; "then …" chaining; silent at carry-on steps; a turn
     already mentioned only buzzes if it follows within 8 s.
   - `reroutePolicy` — ≥ 20 s between attempts, 20/40/60 s backoff; never when paused, unfocused,
     arrived, near the end or on a synthetic route. `heading` — circular smoothing, camera bearing
     (route direction when walking, compass when still). `simulator` — fake walks for tests/dev.
-- **Hooks**: `useLiveLocation` (GPS fixes at `BestForNavigation` + smoothed compass; in `__DEV__` the
-  **SIM** map button replays a simulated walk with a detour instead) and `useNavigation` (drives the
+- **Hooks**: `useLiveLocation` (GPS fixes at `BestForNavigation`, through `fixFilter`, + smoothed
+  compass; in `__DEV__` the **SIM** map button replays a simulated walk with a detour instead, at
+  10 m/s but still 1 fix/s so the time-based rules apply, unfiltered) and `useNavigation` (drives the
   tracker, speaks via `lib/voice.ts` (expo-speech; expo-audio `playsInSilentMode`, mixes with other
   audio), buzzes via `lib/haptics.ts` (1 tap left, 2 taps right), reroutes via `useReroute`, reveals
   curiosities within `REVEAL_THRESHOLD_M = 60` — all frozen while paused or while a modal covers the
@@ -202,11 +267,15 @@ with shared types but **not Zod-parsed** on the client.
   rejoin | compass | paused | arrived`.
 - **UI** (`app/walk/active.tsx`): full-bleed `WebMap mode="nav"`, `ManeuverBanner` (sage-dark for
   "follow this", ink for finding/rerouting/off-route/paused; `ManeuverIcon` arrows for ORS types),
-  `MapControls` (2D/3D, mute, overview, dev SIM), `RecenterPill` after a pan (auto re-centres after
-  15 s), `NavSheet` (Reanimated/Gesture Handler, drag/tap on its summary only: ETA, distance, arrival
-  time, progress, next curiosity; expanded: `DirectionsList` from the current step, Pause, End walk).
-  `useKeepAwake` keeps the screen on. Synthetic walks get one automatic attempt to become a real
-  route; otherwise the banner points at the next curiosity/home ("compass" mode).
+  `MapControls` (re-centre — always there, sage when the camera isn't following, also leaves
+  overview; 2D/3D, mute, overview, dev SIM; a pan also auto re-centres after 15 s), `NavSheet`
+  (Reanimated/Gesture Handler, drag/tap on its summary only: ETA, distance, arrival time, progress;
+  always visible below it: the next curiosity (not tappable) and Pause / End walk; expanded:
+  `DirectionsList` from the current step).
+  `useKeepAwake` keeps the screen on. Arriving (status `arrived`: ≤ 25 m left, back at the start or
+  at an A→B finish) completes the walk and goes straight to `walk/complete` — once focused, never
+  while paused; the banner's Finish button is only a retry if that request fails. Synthetic walks get one automatic attempt to become a real
+  route; otherwise the banner points at the next curiosity/the finish ("compass" mode).
 
 ## Design system
 
@@ -228,12 +297,20 @@ the same palette (`lib/map/style.ts`).
   `font-sans-medium`, `font-sans-semibold`); mono = Menlo/`monospace` inline (`Mono`, `Overline`).
   Map labels use Noto Sans (the only fonts OpenFreeMap serves).
 - Radii: `rounded-card` 18, `rounded-panel` 20, `rounded-cta` 18, `rounded-chip` 13.
-- Building blocks: `Screen`, `Button` (`ink` | `sage` | `outline` | `light`), `FloatingCard`,
-  `typography.tsx` (`Overline`, `Mono`, `Serif`), `chips.tsx`, `icons.tsx` (hand-drawn 20×20 stroke
-  SVGs, `{ size, color }`), `ManeuverIcon` (32-grid turn arrows in the same style).
+- Building blocks: `Screen`, `Button` (`ink` | `sage` for the main action, `secondary` = raised
+  paper with a hairline border beside/below it, `light` on dark; `size` `md` (58 tall, the default everywhere) / `sm` (48); optional
+  `icon`, or `iconOnly` for a square icon button like Reshuffle; `loading` keeps the size), `Segmented` (a few named options in one track — use it instead
+  of cycling values), `FloatingCard`, `typography.tsx` (`Overline`, `Mono`, `Serif`), `chips.tsx`
+  (`LengthChip`, `CategoryChip`, `CategoryTag`), `CuriosityView` / `CuriosityThumb` / `PhotoButton`,
+  `icons.tsx` (hand-drawn 20×20 stroke SVGs, `{ size, color }`, incl. `ShuffleIcon`), `ManeuverIcon`
+  (32-grid turn arrows in the same style).
 - Styling: NativeWind `className` first; inline `style` only for shadows, hairline rgba borders,
   letter-spacing/mono font, computed sizes/transforms, and Reanimated styles (animated views use
   `style`, not `className`).
+- **Never give a `Pressable` a function `style` (`({ pressed }) => …`)**: with a `className` on it,
+  NativeWind silently drops it (sizes, shadows vanish — buttons collapsed to their text). Use a
+  plain style object (as `Button` does for its size), and track pressed state with
+  `onPressIn`/`onPressOut` if the look must change. Avoid `active:` classes on the same element.
 
 ## Conventions
 
@@ -291,9 +368,11 @@ the same palette (`lib/map/style.ts`).
 
 - `settings.avoidBusyRoads` is stored but not used by routing.
 - Pause doesn't stop the walk clock (time left is always from `startedAt`); guidance does freeze.
-- Discovery shows a curiosity's distance from the walk *start*, not from the walker.
-- Placeholders: "Sign in", "About Amble", curiosity photos (`PhotoBlock`), the "Quiet" stat,
-  "Take me there" (just goes back).
+- Placeholders: "Sign in", "About Amble".
+- Only well-documented places (a Wikipedia/Wikidata link or an image tag in OSM) get a photo or
+  summary; the rest show the `PhotoBlock` placeholder and whatever facts their tags have.
+- Avoiding used streets relies on ORS `avoid_polygons`; where a later leg must *cross* an earlier
+  street, the strips can block it and that leg falls back to plain routing (reuse allowed).
 - The navigation UI (React Native side) has no automated tests; the engine, map style/page, bridge
   and API do.
 

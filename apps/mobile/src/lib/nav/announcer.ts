@@ -75,6 +75,8 @@ export function nextAnnouncement(
     stepIndex: number;
     distToNextM: number | null;
     units: Units;
+    /** False for an A→B walk: arriving is "you're there", not "back where you started". */
+    roundTrip?: boolean;
     /** ms timestamp, for spacing out speech */
     now?: number;
   },
@@ -133,7 +135,7 @@ export function nextAnnouncement(
       announcement: {
         key: nowKey,
         stage: 'now',
-        text: quiet ? null : nowPhrase(upcoming, chain),
+        text: quiet ? null : nowPhrase(upcoming, chain, { roundTrip: ctx.roundTrip }),
         haptic,
       },
     };
@@ -146,7 +148,7 @@ export function nextAnnouncement(
       announcement: {
         key: prepareKey,
         stage: 'prepare',
-        text: preparePhrase(upcoming, ctx.distToNextM, ctx.units),
+        text: preparePhrase(upcoming, ctx.distToNextM, ctx.units, { roundTrip: ctx.roundTrip }),
         haptic: null,
       },
     };

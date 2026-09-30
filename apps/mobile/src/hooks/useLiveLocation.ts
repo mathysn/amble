@@ -1,14 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RouteGeometry } from '@amble/shared';
 import { watchFixes, watchHeading } from '../lib/location';
-import { angleDiff, bearingDeg, buildRouteIndex, simulateWalk, smoothHeading, type Fix } from '../lib/nav';
+import {
+  angleDiff,
+  bearingDeg,
+  buildRouteIndex,
+  filterFix,
+  initFixFilter,
+  simulateWalk,
+  smoothHeading,
+  type Fix,
+} from '../lib/nav';
 
 /** Compass updates are smoothed, then passed on at most this often… */
 const HEADING_MIN_MS = 250;
 /** …and only when they've turned at least this much. */
 const HEADING_MIN_DEG = 3;
-/** The dev simulation walks at a brisk jog so a whole loop fits in a few minutes. */
-const SIM_SPEED_MPS = 4;
+/** The dev simulation runs at ~7× walking pace (a 2 km loop in ~3½ minutes), still
+ *  one fix a second so the time-based rules (off-route, reroute gaps) still apply. */
+const SIM_SPEED_MPS = 10;
 
 export type LiveLocation = {
   fix: Fix | null;
@@ -18,7 +28,8 @@ export type LiveLocation = {
 };
 
 /**
- * The walker's live position and compass heading while navigating. In dev
+ * The walker's live position and compass heading while navigating. Real GPS
+ * fixes are smoothed (`fixFilter`) before they're passed on. In dev
  * builds, `simulate` replays a fake walk of that route instead (one fix per
  * second, with a detour a third of the way round to exercise rerouting).
  */
@@ -54,7 +65,13 @@ export function useLiveLocation({
   useEffect(() => {
     if (!enabled || simulating) return;
     setError(null);
-    const stopFixes = watchFixes(setFix, (e) => setError(e instanceof Error ? e.message : String(e)));
+    let filter = initFixFilter();
+    const onFix = (raw: Fix) => {
+      const r = filterFix(filter, raw);
+      filter = r.state;
+      if (r.fix) setFix(r.fix);
+    };
+    const stopFixes = watchFixes(onFix, (e) => setError(e instanceof Error ? e.message : String(e)));
     const stopHeading = watchHeading(onHeading);
     return () => {
       stopFixes();
@@ -73,6 +90,7 @@ export function useLiveLocation({
     });
     let i = 0;
     let prev: Fix | null = null;
+    // Simulated fixes are already clean (and far faster than the filter's idea of walking).
     const timer = setInterval(() => {
       const f = fixes[i++];
       if (!f) return clearInterval(timer);

@@ -9,13 +9,16 @@ import { MANEUVER } from './routeIndex';
 
 type StepLike = { type: number | null; wayName: string | null; exitNumber?: number };
 
+/** `first`: the walk's opening step. `roundTrip: false`: an A→B walk (arriving isn't "back"). */
+export type PhraseOpts = { first?: boolean; roundTrip?: boolean };
+
 const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth'];
 const ordinal = (n: number) => ORDINALS[n - 1] ?? `${n}th`;
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 /** The maneuver on its own, e.g. "Turn left", "Take the second exit". */
-export function maneuverTitle(step: StepLike, opts: { first?: boolean } = {}): string {
+export function maneuverTitle(step: StepLike, opts: PhraseOpts = {}): string {
   switch (step.type) {
     case MANEUVER.left:
       return 'Turn left';
@@ -38,7 +41,7 @@ export function maneuverTitle(step: StepLike, opts: { first?: boolean } = {}): s
     case MANEUVER.uTurn:
       return 'Turn around';
     case MANEUVER.arrive:
-      return 'Back where you started';
+      return opts.roundTrip === false ? "You've arrived" : 'Back where you started';
     case MANEUVER.depart:
       return opts.first ? 'Set off' : 'Carry on';
     case MANEUVER.keepLeft:
@@ -58,7 +61,7 @@ export function wayClause(step: StepLike): string {
 }
 
 /** Full sentence, e.g. "Turn left onto Long Acre". */
-export function maneuverPhrase(step: StepLike, opts: { first?: boolean } = {}): string {
+export function maneuverPhrase(step: StepLike, opts: PhraseOpts = {}): string {
   const title = maneuverTitle(step, opts);
   if (step.type === MANEUVER.roundaboutEnter && step.exitNumber) {
     return `At the roundabout, ${lowerFirst(title)}${step.wayName ? ` onto ${step.wayName}` : ''}`;
@@ -79,16 +82,22 @@ export function spokenDistance(m: number, units: Units): string {
 }
 
 /** "In 60 metres, turn left onto Long Acre." */
-export function preparePhrase(step: StepLike, distM: number, units: Units): string {
+export function preparePhrase(step: StepLike, distM: number, units: Units, opts: PhraseOpts = {}): string {
   if (step.type === MANEUVER.arrive) {
-    return `In ${spokenDistance(distM, units)}, you'll be back where you started.`;
+    return opts.roundTrip === false
+      ? `In ${spokenDistance(distM, units)}, you'll be there.`
+      : `In ${spokenDistance(distM, units)}, you'll be back where you started.`;
   }
   return `In ${spokenDistance(distM, units)}, ${lowerFirst(maneuverPhrase(step))}.`;
 }
 
 /** "Turn left onto Long Acre, then bear right." */
-export function nowPhrase(step: StepLike, then?: StepLike | null): string {
-  if (step.type === MANEUVER.arrive) return "You're back where you started. Lovely wander.";
+export function nowPhrase(step: StepLike, then?: StepLike | null, opts: PhraseOpts = {}): string {
+  if (step.type === MANEUVER.arrive) {
+    return opts.roundTrip === false
+      ? "You've arrived. Lovely wander."
+      : "You're back where you started. Lovely wander.";
+  }
   const main = maneuverPhrase(step);
   if (!then || then.type === MANEUVER.arrive) return `${main}.`;
   return `${main}, then ${lowerFirst(maneuverTitle(then))}.`;

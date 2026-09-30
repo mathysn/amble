@@ -1,9 +1,11 @@
-import { ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { isRoundTrip } from '@amble/shared';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Screen } from '../../src/components/Screen';
 import { Button } from '../../src/components/Button';
 import { StylizedMap } from '../../src/components/StylizedMap';
-import { BookmarkIcon } from '../../src/components/icons';
+import { CuriosityThumb } from '../../src/components/CuriosityView';
+import { ChevronRightIcon } from '../../src/components/icons';
 import { Mono, Overline, Serif } from '../../src/components/typography';
 import { useSettings, useWalk } from '../../src/api/hooks';
 import { useWalkSession } from '../../src/store/walkSession';
@@ -19,13 +21,24 @@ export default function Complete() {
   const units = settings?.units ?? 'km';
 
   if (!walk) {
-    return <Screen className="items-center justify-center"><Serif className="text-[20px] text-ink/40">Loading…</Serif></Screen>;
+    return (
+      <Screen className="items-center justify-center">
+        <Serif className="text-[20px] text-ink/40">Loading…</Serif>
+      </Screen>
+    );
   }
 
-  const found = walk.curiosities.filter((c) => c.found).length;
+  const foundList = walk.curiosities.filter((c) => c.found);
+  const found = foundList.length;
+  const missed = walk.curiosities.length - found;
   const durationMin =
     walk.startedAt && walk.completedAt
-      ? Math.max(1, Math.round((new Date(walk.completedAt).getTime() - new Date(walk.startedAt).getTime()) / 60_000))
+      ? Math.max(
+          1,
+          Math.round(
+            (new Date(walk.completedAt).getTime() - new Date(walk.startedAt).getTime()) / 60_000,
+          ),
+        )
       : walk.plannedMinutes;
   const steps = (walk.distanceKm * 1350).toFixed(0);
 
@@ -36,39 +49,79 @@ export default function Complete() {
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 12, paddingBottom: 16 }}>
-        <Overline tint="sage">Home again</Overline>
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 12, paddingBottom: 16 }}
+      >
+        <Overline tint="sage">
+          {isRoundTrip(walk)
+            ? 'Home again'
+            : `You made it${walk.endLabel ? ` to ${walk.endLabel}` : ''}`}
+        </Overline>
         <Serif className="mb-5 mt-3.5 text-[32px] leading-[36px]">
           A lovely {durationMin}-minute wander.
         </Serif>
 
         <View className="mb-4 flex-row gap-2.5">
-          <StatTile value={formatDistance(walk.distanceKm, units).split(' ')[0]!} unit={units} label="walked" />
+          <StatTile
+            value={formatDistance(walk.distanceKm, units).split(' ')[0]!}
+            unit={units}
+            label="walked"
+          />
           <StatTile value={String(found)} unit={`/ ${walk.curiosities.length}`} label="found" />
           <StatTile value={(Number(steps) / 1000).toFixed(1)} unit="k" label="steps" />
         </View>
 
         <View className="my-5">
-          <StylizedMap route={walk.route} start={{ lat: walk.startLat, lng: walk.startLng }} stops={walk.curiosities} height={120} />
+          <StylizedMap
+            route={walk.route}
+            start={{ lat: walk.startLat, lng: walk.startLng }}
+            end={isRoundTrip(walk) ? null : { lat: walk.endLat!, lng: walk.endLng! }}
+            stops={walk.curiosities}
+            height={120}
+          />
         </View>
 
         <Overline className="mb-3 ml-0.5">What you found</Overline>
-        <View>
-          {walk.curiosities.map((c, i) => (
-            <View
-              key={c.id}
-              className={`flex-row items-center gap-3 py-2.5 ${i === walk.curiosities.length - 1 ? '' : 'border-b border-ink/[0.09]'}`}
-            >
-              <View className="h-[34px] w-[34px] rounded-[9px] bg-sand-deep" />
-              <Text className="flex-1 font-sans-medium text-[14px] text-ink">{c.name}</Text>
-              <BookmarkIcon size={18} filled={c.found} color={c.found ? '#7A8B6F' : 'rgba(46,43,38,0.3)'} />
-            </View>
-          ))}
-        </View>
+        {found === 0 ? (
+          <Text className="font-sans text-[14px] leading-[21px] text-ink/55">
+            {walk.curiosities.length === 0
+              ? 'A quiet one — no curiosities on this route, just the walk itself.'
+              : "Nothing this time — the curiosities stayed hidden. There's always the next wander."}
+          </Text>
+        ) : (
+          <View>
+            {foundList.map((c, i) => (
+              <Pressable
+                key={c.id}
+                onPress={() => router.push(`/curiosity/${c.id}`)}
+                className={`flex-row items-center gap-3 py-2.5 ${i === foundList.length - 1 ? '' : 'border-b border-ink/[0.09]'}`}
+              >
+                <CuriosityThumb id={c.id} size={40} />
+                <View className="flex-1">
+                  <Text className="font-sans-medium text-[14px] text-ink">{c.name}</Text>
+                  <Mono className="text-ink/40">{c.category}</Mono>
+                </View>
+                <ChevronRightIcon />
+              </Pressable>
+            ))}
+          </View>
+        )}
+        {found > 0 && missed > 0 ? (
+          <Text className="mt-3 font-sans text-[13px] text-ink/45">
+            {missed === 1 ? 'One more slipped by' : `${missed} more slipped by`} this time.
+          </Text>
+        ) : null}
 
         <View className="mt-6 flex-row gap-3">
-          <Button label="Done" variant="outline" className="flex-1" onPress={done} />
-          <Button label="See all wanders" className="flex-[1.3]" onPress={() => { clear(); router.replace('/(tabs)/wanders'); }} />
+          <Button label="Done" variant="secondary" className="flex-1" onPress={done} />
+          <Button
+            label="See all wanders"
+            className="flex-[1.3]"
+            onPress={() => {
+              clear();
+              router.replace('/(tabs)/wanders');
+            }}
+          />
         </View>
       </ScrollView>
     </Screen>

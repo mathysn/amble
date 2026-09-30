@@ -48,8 +48,7 @@ export default function Wanders() {
           </Text>
           <Button
             label="Start your first walk"
-            className="px-8"
-            style={{ alignSelf: 'stretch' }}
+            className="self-stretch"
             onPress={() => router.push('/(tabs)')}
           />
         </View>

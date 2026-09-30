@@ -5,6 +5,8 @@ import {
   type Pace,
   type RerouteStrategy,
   type Units,
+  isRoundTrip,
+  walkEnd,
   type Walk,
   type WalkCuriosity,
 } from '@amble/shared';
@@ -47,7 +49,7 @@ export const REVEAL_THRESHOLD_M = 60;
  * - navigating — turn-by-turn
  * - rerouting — asking the server for a new way
  * - rejoin — off the route and no new route (yet): pointing back to it
- * - compass — a synthetic walk (no streets): pointing to the next curiosity / home
+ * - compass — a synthetic walk (no streets): pointing to the next curiosity / the finish
  * - paused, arrived
  */
 export type NavStatus =
@@ -152,6 +154,7 @@ export function useNavigation(o: Options): Navigation {
       stepIndex: view.stepIndex,
       distToNextM: view.distToNextM,
       units,
+      roundTrip: walk ? isRoundTrip(walk) : true,
       now: Date.now(),
     });
     // Advance even while muted, so un-muting doesn't replay a backlog.
@@ -273,7 +276,7 @@ export function useNavigation(o: Options): Navigation {
     pointer = { bearing: view.toStart.bearing, distM: view.toStart.distM };
   } else if (!index.real) {
     status = 'compass';
-    const target = nextCuriosity ?? { lat: walk.startLat, lng: walk.startLng };
+    const target = nextCuriosity ?? walkEnd(walk);
     pointer = { bearing: bearingDeg(fix, target), distM: haversineM(fix, target) };
   } else if (rerouting) status = 'rerouting';
   else if (state.offRoute) {

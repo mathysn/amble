@@ -4,6 +4,7 @@ import {
   APPROACH_REROUTE_M,
   ARRIVE_M,
   BACK_ON_ROUTE_M,
+  DISPLAY_BACKSTEP_M,
   GAP_MS,
   JOIN_MAX_M,
   JOIN_MIN_M,
@@ -30,6 +31,8 @@ export type TrackerState = {
   snapped: Coord;
   /** Where to draw the walker: snapped when confidently on-route, else the raw fix. */
   display: Coord | null;
+  /** Along-route metres of the snapped display point (holds still through small backward jitter). */
+  displayAlongM: number;
   accuracy: number;
   lastFix: Fix | null;
   /** Time of the last fix accurate enough to move progress. */
@@ -69,6 +72,7 @@ export function initTracker(index: RouteIndex, opts: { fromAlongM?: number; join
     seg: at.seg,
     snapped: at.coord,
     display: null,
+    displayAlongM: alongM,
     accuracy: 0,
     lastFix: null,
     lastGoodT: null,
@@ -114,6 +118,7 @@ export function updateTracker(index: RouteIndex, s: TrackerState, fix: Fix): Tra
       lastGoodT: fix.t,
       offDistM: head.distM,
       display: snapDisplay(at.coord, here, head.distM, fix.accuracy, false),
+      displayAlongM: head.alongM,
     };
   }
 
@@ -168,6 +173,12 @@ export function updateTracker(index: RouteIndex, s: TrackerState, fix: Fix): Tra
     speedMps = 0.7 * s.speedMps + 0.3 * Math.min(inst, 5);
   }
 
+  // The snapped puck doesn't shuffle backwards on jitter; a real step back
+  // (longer than DISPLAY_BACKSTEP_M) still shows.
+  const snap = index.real && !offRoute && hit.distM <= OFF_ROUTE_M && fix.accuracy <= SNAP_ACCURACY_M;
+  const back = s.displayAlongM - alongM;
+  const displayAlongM = snap && back > 0 && back < DISPLAY_BACKSTEP_M ? s.displayAlongM : alongM;
+
   return {
     ...base,
     alongM,
@@ -179,7 +190,8 @@ export function updateTracker(index: RouteIndex, s: TrackerState, fix: Fix): Tra
     offStreak,
     speedMps,
     arrived: s.arrived || (index.totalM > 2 * ARRIVE_M && index.totalM - alongM <= ARRIVE_M),
-    display: index.real ? snapDisplay(at.coord, here, hit.distM, fix.accuracy, offRoute) : here,
+    display: snap ? pointAt(index, displayAlongM).coord : here,
+    displayAlongM,
   };
 }
 

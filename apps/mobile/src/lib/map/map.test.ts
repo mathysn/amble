@@ -28,6 +28,8 @@ describe('buildAmbleStyle', () => {
     // Route and stops draw above the 3D buildings.
     expect(ids.indexOf('route-remaining')).toBeGreaterThan(ids.indexOf(MAP_LAYERS.building3d));
     expect(ids.indexOf('stops')).toBeGreaterThan(ids.indexOf('route-remaining'));
+    // Direction chevrons ride on top of the way ahead.
+    expect(ids.indexOf('route-arrows')).toBeGreaterThan(ids.indexOf('route-remaining'));
   });
 });
 

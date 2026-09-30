@@ -34,6 +34,9 @@ export const MAP_SOURCES = {
   stops: 'stops',
 } as const;
 
+/** The route's direction chevron — drawn by the map page at runtime (see html.ts). */
+export const ROUTE_ARROW_IMAGE = 'route-arrow';
+
 // A few map-only tints derived from the palette (kept here, not in theme.ts,
 // because nothing outside the map uses them).
 const TINT = {
@@ -269,6 +272,25 @@ const routeLayers: LayerSpecification[] = [
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: { 'line-color': colors.sage, 'line-width': zoomWidth([[12, 2.5], [18, 9]]) },
   },
+  // Chevrons along the way ahead, pointing the way round the loop. The style has
+  // no sprite: the page runtime draws this one icon when MapLibre asks for it.
+  {
+    id: 'route-arrows',
+    type: 'symbol',
+    source: MAP_SOURCES.routeRemaining,
+    // From 11 so a long route's preview (zoomed well out) still shows which way round it goes.
+    minzoom: 11,
+    layout: {
+      'symbol-placement': 'line',
+      'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 11, 40, 18, 110],
+      'icon-image': ROUTE_ARROW_IMAGE,
+      'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 18, 1.1],
+      'icon-rotation-alignment': 'map',
+      'icon-pitch-alignment': 'map',
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
+  },
 ];
 
 const labelLayers: LayerSpecification[] = [
@@ -352,10 +374,11 @@ const stopLayers: LayerSpecification[] = [
     type: 'circle',
     source: MAP_SOURCES.stops,
     paint: {
-      'circle-radius': ['match', ['get', 'state'], 'start', 7, 'next', 7.5, 6],
+      'circle-radius': ['match', ['get', 'state'], 'start', 7, 'end', 8, 'next', 7.5, 6],
       'circle-color': [
         'match', ['get', 'state'],
         'start', colors.ink,
+        'end', colors.sageDark,
         'found', colors.sage,
         'next', colors.sage,
         colors.paperRaised,

@@ -20,8 +20,25 @@ export type Units = z.infer<typeof UnitsSchema>;
 export const WalkStatusSchema = z.enum(['planned', 'active', 'paused', 'completed']);
 export type WalkStatus = z.infer<typeof WalkStatusSchema>;
 
-/** Allowed walk lengths (minutes) shown as chips on the home screen. */
-export const WALK_LENGTHS = [15, 30, 45, 60] as const;
+/**
+ * The walk lengths offered, by name rather than by the clock. `minutes` is what
+ * the planner works from (distance = minutes × pace); the app never shows it.
+ */
+export const WALK_LENGTHS = [
+  { id: 'stroll', label: 'Stroll', hint: 'a quick one', minutes: 20 },
+  { id: 'wander', label: 'Wander', hint: 'the usual', minutes: 40 },
+  { id: 'roam', label: 'Roam', hint: 'take your time', minutes: 65 },
+] as const;
+export type WalkLength = (typeof WALK_LENGTHS)[number];
+
+/** The named length closest to `minutes` (also maps older 15/30/45/60 values). */
+export function lengthFor(minutes: number): WalkLength {
+  let best: WalkLength = WALK_LENGTHS[0];
+  for (const l of WALK_LENGTHS) {
+    if (Math.abs(l.minutes - minutes) < Math.abs(best.minutes - minutes)) best = l;
+  }
+  return best;
+}
 
 export const LatSchema = z.number().min(-90).max(90);
 export const LngSchema = z.number().min(-180).max(180);

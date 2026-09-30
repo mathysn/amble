@@ -52,11 +52,14 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-async function makeWalk(status = 'active', owner = deviceId) {
+async function makeWalk(status = 'active', owner = deviceId, end?: Coord & { label: string }) {
   return prisma.walk.create({
     data: {
       deviceId: owner,
       status,
+      endLat: end?.lat ?? null,
+      endLng: end?.lng ?? null,
+      endLabel: end?.label ?? null,
       startLat: start.lat,
       startLng: start.lng,
       plannedMinutes: 30,
@@ -94,6 +97,16 @@ describe('POST /walks/:id/reroute', () => {
 
     const stored = await prisma.walk.findUniqueOrThrow({ where: { id: walk.id } });
     expect(JSON.parse(stored.routeGeoJson).coordinates).toHaveLength(5);
+  });
+
+  it('heads for the end point of an A→B walk, and returns it', async () => {
+    const end = { lat: 51.503, lng: -0.115, label: 'Seven Dials' };
+    const walk = await makeWalk('active', deviceId, end);
+    const res = await reroute(walk.id);
+    expect(res.statusCode).toBe(200);
+    const updated = res.json() as Walk;
+    expect(updated.route.coordinates.at(-1)).toEqual([end.lng, end.lat]);
+    expect([updated.endLat, updated.endLng, updated.endLabel]).toEqual([end.lat, end.lng, end.label]);
   });
 
   it.each(['planned', 'paused', 'completed'])('refuses a %s walk with 409', async (status) => {

@@ -11,7 +11,15 @@ import { colors } from '../../src/theme';
 /** 04 · Finding your route — runs the plan request behind a calm loader. */
 export default function Finding() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ lat: string; lng: string; minutes: string; categories: string }>();
+  const params = useLocalSearchParams<{
+    lat: string;
+    lng: string;
+    minutes: string;
+    categories: string;
+    endLat?: string;
+    endLng?: string;
+    endLabel?: string;
+  }>();
   const plan = usePlanWalk();
   const started = useRef(false);
 
@@ -27,6 +35,15 @@ export default function Finding() {
         lng: Number(params.lng),
         minutes,
         categories: (params.categories?.split(',') as Category[]) ?? ['niche', 'hidden'],
+        ...(params.endLat && params.endLng
+          ? {
+              end: {
+                lat: Number(params.endLat),
+                lng: Number(params.endLng),
+                ...(params.endLabel ? { label: params.endLabel } : {}),
+              },
+            }
+          : {}),
       },
       {
         onSuccess: (walk) => router.replace(`/walk/route?id=${walk.id}`),
@@ -43,7 +60,7 @@ export default function Finding() {
           <Text className="mt-3 text-center font-sans text-[15px] leading-[22px] text-ink/55">
             {plan.error?.message ?? 'We couldn’t find enough curiosities around here right now.'}
           </Text>
-          <Button label="Go back" variant="outline" className="mt-7 px-8" onPress={() => router.back()} />
+          <Button label="Go back" variant="secondary" className="mt-7 self-stretch" onPress={() => router.back()} />
         </View>
       ) : (
         <>

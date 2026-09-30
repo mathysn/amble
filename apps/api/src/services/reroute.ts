@@ -7,6 +7,8 @@ import type {
 } from '@amble/shared';
 import { haversineM } from '../lib/geo.js';
 import type { Router, RoutedPath } from './routing.js';
+import { routeLegs } from './legs.js';
+import { stopSpurs } from './spurs.js';
 
 /** Routing is down (no key, ORS error, timeout): the client falls back to a "rejoin" arrow. */
 export class RoutingUnavailableError extends Error {
@@ -21,6 +23,8 @@ export type RerouteInput = {
   steps: RouteStep[];
   source: RouteSource;
   start: Coord;
+  /** Where the walk finishes: the start for a loop, or its end point. */
+  finish?: Coord;
   here: Coord;
   /** The walk's curiosities, any order; `order` defines their sequence along the route. */
   curiosities: { lat: number; lng: number; order: number; found: boolean }[];
@@ -80,6 +84,15 @@ async function route(router: Router, waypoints: Coord[]): Promise<RoutedPath> {
   }
 }
 
+/** Leg by leg, keeping off `avoid` (the streets already walked) where it can. */
+async function routeFresh(router: Router, waypoints: Coord[], avoid: LngLat[]): Promise<RoutedPath> {
+  try {
+    return await routeLegs(router, waypoints, { avoidAlso: avoid });
+  } catch (err) {
+    throw new RoutingUnavailableError(err);
+  }
+}
+
 const shift = (steps: RouteStep[], by: number): RouteStep[] =>
   steps.map((s) => ({ ...s, startIndex: s.startIndex + by }));
 
@@ -111,7 +124,8 @@ export async function planReroute(input: RerouteInput): Promise<ReroutePlan> {
     };
   }
 
-  // rejoin: keep what's been walked, then route through what's left, home.
+  // rejoin: keep what's been walked, then route through what's left to the finish,
+  // keeping off the streets already walked where possible.
   const prefix = fromIndex !== undefined ? coords.slice(0, Math.min(fromIndex, coords.length - 1) + 1) : [];
 
   const ordered = input.curiosities.slice().sort((a, b) => a.order - b.order);
@@ -120,7 +134,23 @@ export async function planReroute(input: RerouteInput): Promise<ReroutePlan> {
     (c, i) => !c.found && (fromIndex === undefined || indices[i]! > fromIndex),
   );
 
-  const path = await route(router, [here, ...ahead.map((c) => ({ lat: c.lat, lng: c.lng })), start]);
+  const finish = input.finish ?? start;
+  const aheadCoords = ahead.map((c) => ({ lat: c.lat, lng: c.lng }));
+  let path = await routeFresh(router, [here, ...aheadCoords, finish], prefix);
+  // Pass side-street curiosities at their junction when they can be seen from
+  // there. Stored stops can't be dropped, so an out-and-back to a far one stays.
+  const spurs = stopSpurs(path, aheadCoords);
+  if (spurs.some((s) => s?.reachable)) {
+    try {
+      path = await routeLegs(
+        router,
+        [here, ...aheadCoords.map((c, i) => (spurs[i]?.reachable ? spurs[i].junction : c)), finish],
+        { avoidAlso: prefix },
+      );
+    } catch {
+      // The first route is still a good route.
+    }
+  }
   const joinM = prefix.length ? haversineM(toCoord(prefix[prefix.length - 1]!), here) : 0;
 
   return {

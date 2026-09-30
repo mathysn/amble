@@ -29,7 +29,7 @@ function RoundButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       hitSlop={6}
-      style={({ pressed }) => [floating, { opacity: pressed ? 0.85 : 1 }]}
+      style={floating}
       className={`h-11 w-11 items-center justify-center rounded-full ${active ? 'bg-ink' : 'bg-paper-raised'}`}
     >
       {children}
@@ -39,6 +39,8 @@ function RoundButton({
 
 /** The column of round map buttons on the walk screen's right edge. */
 export function MapControls({
+  following,
+  onRecenter,
   threeD,
   onToggle3D,
   muted,
@@ -49,6 +51,9 @@ export function MapControls({
   onToggleSimulate,
   style,
 }: {
+  /** The camera is following the walker (the recenter button is then quiet). */
+  following: boolean;
+  onRecenter: () => void;
   threeD: boolean;
   onToggle3D: () => void;
   muted: boolean;
@@ -62,6 +67,9 @@ export function MapControls({
 }) {
   return (
     <View style={style} className="gap-2.5">
+      <RoundButton onPress={onRecenter} label="Re-centre on me">
+        <RecenterIcon size={21} color={following ? colors.ink : colors.sageDark} />
+      </RoundButton>
       <RoundButton onPress={onToggle3D} label={threeD ? 'Switch to flat map' : 'Switch to 3D map'}>
         <Text className="font-sans-semibold text-[13px] text-ink">{threeD ? '2D' : '3D'}</Text>
       </RoundButton>
@@ -77,20 +85,5 @@ export function MapControls({
         </RoundButton>
       )}
     </View>
-  );
-}
-
-/** Shown when the map isn't following the walker (after a pan, or in overview). */
-export function RecenterPill({ onPress, style }: { onPress: () => void; style?: ViewStyle }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      style={({ pressed }) => [floating, style, { opacity: pressed ? 0.85 : 1 }]}
-      className="flex-row items-center gap-2 rounded-full bg-paper-raised px-4 py-2.5"
-    >
-      <RecenterIcon size={16} color={colors.sageDark} />
-      <Text className="font-sans-semibold text-[14px] text-ink">Re-centre</Text>
-    </Pressable>
   );
 }

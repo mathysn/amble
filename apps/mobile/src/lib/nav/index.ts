@@ -3,6 +3,7 @@
 export * from './constants';
 export * from './routeIndex';
 export * from './tracker';
+export * from './fixFilter';
 export * from './heading';
 export * from './phrases';
 export * from './announcer';

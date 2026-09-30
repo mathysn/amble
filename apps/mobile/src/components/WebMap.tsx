@@ -23,6 +23,8 @@ type Props = {
   /** Changes whenever the route itself changes (e.g. after a reroute). */
   routeKey?: string;
   start: Coord;
+  /** Where an A→B walk finishes (null/omitted: it loops back to `start`). */
+  end?: Coord | null;
   stops?: WebMapStop[];
   /** 'preview': static north-up overview. 'nav': rotatable, pitchable, follow camera. */
   mode?: MapPageMode;
@@ -69,6 +71,7 @@ export function WebMap(props: Props) {
     route,
     routeKey,
     start,
+    end = null,
     stops = [],
     mode = 'preview',
     position,
@@ -181,13 +184,14 @@ export function WebMap(props: Props) {
   const stopItems = useMemo(
     () => [
       { lng: start.lng, lat: start.lat, state: 'start' as StopState },
+      ...(end ? [{ lng: end.lng, lat: end.lat, state: 'end' as StopState }] : []),
       ...stops.map((s) => ({
         lng: s.lng,
         lat: s.lat,
         state: (s.found ? 'found' : s.next ? 'next' : 'unfound') as StopState,
       })),
     ],
-    [start.lng, start.lat, stops],
+    [start.lng, start.lat, end?.lng, end?.lat, stops],
   );
   // Callers often rebuild the stops array every render; only send real changes.
   const stopsSig = JSON.stringify(stopItems);
@@ -233,6 +237,7 @@ export function WebMap(props: Props) {
       <StylizedMap
         route={route}
         start={start}
+        end={end}
         stops={stops}
         position={dot}
         fill={fill}

@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { isRoundTrip, lengthFor } from '@amble/shared';
 import { Screen } from '../../src/components/Screen';
 import { Button } from '../../src/components/Button';
 import { WebMap } from '../../src/components/WebMap';
 import { LandmarkRow } from '../../src/components/LandmarkRow';
 import { DirectionsList } from '../../src/components/DirectionsList';
-import { ChevronRightIcon } from '../../src/components/icons';
+import { ChevronRightIcon, ShuffleIcon } from '../../src/components/icons';
 import { Overline, Serif } from '../../src/components/typography';
 import { useReshuffle, useSettings, useStartWalk, useWalk } from '../../src/api/hooks';
 import { useWalkSession } from '../../src/store/walkSession';
@@ -29,6 +30,9 @@ export default function RoutePreview() {
   }
 
   const startCoord = { lat: walk.startLat, lng: walk.startLng };
+  const endCoord = isRoundTrip(walk) ? null : { lat: walk.endLat!, lng: walk.endLng! };
+  const length = lengthFor(walk.plannedMinutes).label.toLowerCase();
+  const title = endCoord ? `A ${length} to ${walk.endLabel ?? 'your finish'}` : `A ${length}, looping home`;
 
   const onStart = () => {
     begin(walk.id);
@@ -41,18 +45,19 @@ export default function RoutePreview() {
     <Screen>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 8, paddingBottom: 16, flexGrow: 1 }}>
         <Overline tint="sage" className="px-1">Your wander</Overline>
-        <Serif className="mb-4 mt-3 px-1 text-[30px]">{walk.plannedMinutes} minutes on foot</Serif>
+        <Serif className="mb-4 mt-3 px-1 text-[30px] leading-[35px]">{title}</Serif>
 
         <View>
           <WebMap
             route={walk.route}
             start={startCoord}
+            end={endCoord}
             stops={walk.curiosities}
             height={190}
           />
           <View className="absolute bottom-3 right-3 rounded-[10px] bg-paper/90 px-3 py-1.5">
             <Text className="font-sans-semibold text-[13px] text-ink">
-              ~{formatDistance(walk.distanceKm, units)} · loops home
+              ~{formatDistance(walk.distanceKm, units)} · {endCoord ? 'one way' : 'loops home'}
             </Text>
           </View>
         </View>
@@ -74,7 +79,6 @@ export default function RoutePreview() {
                   name={c.name}
                   category={c.category}
                   last={i === walk.curiosities.length - 1}
-                  onPress={() => router.push(`/curiosity/${c.id}`)}
                 />
               ))}
             </View>
@@ -99,21 +103,30 @@ export default function RoutePreview() {
                 <ChevronRightIcon />
               </View>
             </Pressable>
-            {showDirections && <DirectionsList steps={walk.steps} units={units} />}
+            {showDirections && (
+              <DirectionsList steps={walk.steps} units={units} roundTrip={!endCoord} />
+            )}
           </View>
         )}
 
         <View className="flex-1" />
         <View className="mt-6 flex-row gap-3">
-          <View className="justify-center">
-            <Button
-              label={reshuffle.isPending ? '…' : 'Reshuffle'}
-              variant="outline"
-              onPress={onReshuffle}
-              style={{ paddingHorizontal: 22 }}
-            />
-          </View>
-          <Button label="Start walking" className="flex-1" loading={start.isPending} onPress={onStart} />
+          <Button
+            label="Reshuffle"
+            variant="secondary"
+            iconOnly
+            icon={<ShuffleIcon size={22} />}
+            loading={reshuffle.isPending}
+            disabled={start.isPending}
+            onPress={onReshuffle}
+          />
+          <Button
+            label="Start walking"
+            className="flex-1"
+            loading={start.isPending}
+            disabled={reshuffle.isPending}
+            onPress={onStart}
+          />
         </View>
       </ScrollView>
     </Screen>

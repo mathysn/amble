@@ -6,9 +6,11 @@ import {
   PlanWalkRequestSchema,
   PACE_METRES_PER_MIN,
   RerouteRequestSchema,
+  walkEnd,
   WalkListResponseSchema,
   WalkSchema,
   type Category,
+  type Coord,
   type Pace,
   type RouteGeometry,
   type RouteSource,
@@ -16,10 +18,11 @@ import {
 } from '@amble/shared';
 import { prisma } from '../db.js';
 import { findCuriositiesNear } from '../services/curiosityStore.js';
-import { generateWander, type Candidate } from '../services/route.js';
+import { generateWander, MIN_END_M, type Candidate } from '../services/route.js';
 import { orsRouter, type Router } from '../services/routing.js';
 import { planReroute, RoutingUnavailableError } from '../services/reroute.js';
 import { toWalk, toWalkSummary } from '../lib/serialize.js';
+import { haversineM } from '../lib/geo.js';
 
 const IdParams = z.object({ id: z.string() });
 const walkInclude = { curiosities: { include: { curiosity: true } } } as const;
@@ -28,6 +31,15 @@ const E = ErrorResponseSchema;
 /** Search radius wide enough to hold the whole loop, clamped to sane bounds. */
 function searchRadius(minutes: number, pace: Pace): number {
   return Math.min(4000, Math.max(800, (minutes * PACE_METRES_PER_MIN[pace]) / 2));
+}
+
+/** Where to look for curiosities: round the start for a loop, or round the
+ *  middle of the way for an A→B wander, wide enough to cover both ends. */
+function searchArea(start: Coord, end: Coord | null, minutes: number, pace: Pace) {
+  const radius = searchRadius(minutes, pace);
+  if (!end) return { center: start, radius };
+  const center = { lat: (start.lat + end.lat) / 2, lng: (start.lng + end.lng) / 2 };
+  return { center, radius: Math.min(6000, Math.max(radius, haversineM(start, end) / 2 + 500)) };
 }
 
 /** Minimum gap between reroutes of one walk (the client throttles harder; this guards ORS). */
@@ -48,14 +60,17 @@ export const walkRoutes: FastifyPluginAsyncZod<WalkRoutesOptions> = async (fasti
     '/walks/plan',
     { schema: { body: PlanWalkRequestSchema, response: { 200: WalkSchema } } },
     async (req) => {
-      const { lat, lng, minutes, categories } = req.body;
+      const { lat, lng, minutes, categories, end: endReq } = req.body;
       const settings =
         (await prisma.settings.findUnique({ where: { deviceId: req.deviceId } })) ??
         DEFAULT_SETTINGS;
       const pace = settings.pace as Pace;
       const start = { lat, lng };
+      // An end right next to the start is just a loop.
+      const end = endReq && haversineM(start, endReq) > MIN_END_M ? endReq : null;
 
-      const rows = await findCuriositiesNear(start, searchRadius(minutes, pace), categories);
+      const area = searchArea(start, end, minutes, pace);
+      const rows = await findCuriositiesNear(area.center, area.radius, categories);
       const candidates: Candidate[] = rows.map((r) => ({
         id: r.id,
         lat: r.lat,
@@ -67,6 +82,7 @@ export const walkRoutes: FastifyPluginAsyncZod<WalkRoutesOptions> = async (fasti
       // a stylized fallback — so a walk can be started anywhere.
       const plan = await generateWander({
         start,
+        end,
         minutes,
         pace,
         candidates,
@@ -80,6 +96,9 @@ export const walkRoutes: FastifyPluginAsyncZod<WalkRoutesOptions> = async (fasti
           status: 'planned',
           startLat: lat,
           startLng: lng,
+          endLat: end?.lat ?? null,
+          endLng: end?.lng ?? null,
+          endLabel: end ? (end.label ?? null) : null,
           plannedMinutes: minutes,
           distanceKm: plan.distanceKm,
           routeGeoJson: JSON.stringify(plan.route),
@@ -125,12 +144,13 @@ export const walkRoutes: FastifyPluginAsyncZod<WalkRoutesOptions> = async (fasti
         ? categories
         : (['niche', 'hidden', 'scenic'] as Category[]);
       const start = { lat: existing.startLat, lng: existing.startLng };
+      const end =
+        existing.endLat !== null && existing.endLng !== null
+          ? { lat: existing.endLat, lng: existing.endLng }
+          : null;
 
-      const rows = await findCuriositiesNear(
-        start,
-        searchRadius(existing.plannedMinutes, pace),
-        enabled,
-      );
+      const area = searchArea(start, end, existing.plannedMinutes, pace);
+      const rows = await findCuriositiesNear(area.center, area.radius, enabled);
       const candidates: Candidate[] = rows.map((r) => ({
         id: r.id,
         lat: r.lat,
@@ -139,6 +159,7 @@ export const walkRoutes: FastifyPluginAsyncZod<WalkRoutesOptions> = async (fasti
       }));
       const plan = await generateWander({
         start,
+        end,
         minutes: existing.plannedMinutes,
         pace,
         candidates,
@@ -241,6 +262,7 @@ export const walkRoutes: FastifyPluginAsyncZod<WalkRoutesOptions> = async (fasti
           steps: JSON.parse(existing.stepsJson) as RouteStep[],
           source: existing.source as RouteSource,
           start: { lat: existing.startLat, lng: existing.startLng },
+          finish: walkEnd(existing),
           here: { lat, lng },
           curiosities: existing.curiosities.map((c) => ({
             lat: c.curiosity.lat,

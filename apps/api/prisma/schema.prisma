@@ -28,7 +28,7 @@ model Device {
 model Settings {
   deviceId       String  @id
   device         Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-  defaultLength  Int     @default(30)
+  defaultLength  Int     @default(40)
   pace           String  @default("easy")
   avoidBusyRoads Boolean @default(true)
   includeNiche   Boolean @default(true)
@@ -50,6 +50,8 @@ model Curiosity {
   era           String?
   neighbourhood String?
   meta          String? // JSON string of raw OSM tags
+  detailsJson   String? // JSON string of CuriosityDetails (photo, summary, facts), fetched lazily
+  detailsAt     DateTime?
   createdAt     DateTime @default(now())
   walkLinks     WalkCuriosity[]
   saves         SavedCuriosity[]
@@ -64,6 +66,9 @@ model Walk {
   status         String    @default("planned")
   startLat       Float
   startLng       Float
+  endLat         Float? // null: the walk loops back to the start
+  endLng         Float?
+  endLabel       String?
   plannedMinutes Int
   distanceKm     Float
   routeGeoJson   String // JSON string of a GeoJSON LineString

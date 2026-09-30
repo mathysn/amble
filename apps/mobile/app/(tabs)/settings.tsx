@@ -1,15 +1,31 @@
+import type { ReactNode } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import type { Pace } from '@amble/shared';
-import { WALK_LENGTHS } from '@amble/shared';
+import type { Pace, Units } from '@amble/shared';
+import { lengthFor, PACE_METRES_PER_MIN, WALK_LENGTHS } from '@amble/shared';
 import { Screen } from '../../src/components/Screen';
+import { Segmented } from '../../src/components/Segmented';
 import { ChevronRightIcon } from '../../src/components/icons';
 import { Overline, Serif } from '../../src/components/typography';
 import { useSettings, useUpdateSettings } from '../../src/api/hooks';
 
-const PACES: Pace[] = ['easy', 'steady', 'brisk'];
-const paceLabel: Record<Pace, string> = { easy: 'Easy', steady: 'Steady', brisk: 'Brisk' };
+const LENGTH_OPTIONS = WALK_LENGTHS.map((l) => ({ value: l.id, label: l.label }));
+const PACE_OPTIONS: { value: Pace; label: string }[] = [
+  { value: 'easy', label: 'Easy' },
+  { value: 'steady', label: 'Steady' },
+  { value: 'brisk', label: 'Brisk' },
+];
+const UNIT_OPTIONS: { value: Units; label: string }[] = [
+  { value: 'km', label: 'Kilometres' },
+  { value: 'mi', label: 'Miles' },
+];
 
-/** 12 · Settings. */
+/** Walking speed for a pace, as the walker would say it. */
+function paceSpeed(pace: Pace, units: Units): string {
+  const kmh = (PACE_METRES_PER_MIN[pace] * 60) / 1000;
+  return units === 'km' ? `about ${kmh.toFixed(1)} km/h` : `about ${(kmh * 0.621).toFixed(1)} mph`;
+}
+
+/** 12 · Settings — every choice visible and one tap away. */
 export default function Settings() {
   const { data: s } = useSettings();
   const update = useUpdateSettings();
@@ -22,13 +38,6 @@ export default function Settings() {
     );
   }
 
-  const cycleLength = () => {
-    const i = WALK_LENGTHS.indexOf(s.defaultLength as (typeof WALK_LENGTHS)[number]);
-    update.mutate({ defaultLength: WALK_LENGTHS[(i + 1) % WALK_LENGTHS.length] });
-  };
-  const cyclePace = () => update.mutate({ pace: PACES[(PACES.indexOf(s.pace) + 1) % PACES.length] });
-  const toggleUnits = () => update.mutate({ units: s.units === 'km' ? 'mi' : 'km' });
-
   return (
     <Screen edges={['top']}>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 16, paddingBottom: 24 }}>
@@ -36,8 +45,18 @@ export default function Settings() {
 
         <Overline className="mb-2.5 ml-1.5">Your walks</Overline>
         <Group>
-          <ValueRow label="Default length" value={`${s.defaultLength} min`} onPress={cycleLength} />
-          <ValueRow label="Walking pace" value={paceLabel[s.pace]} onPress={cyclePace} />
+          <ChoiceRow label="Usual length" hint="What Set off starts on">
+            <Segmented
+              options={LENGTH_OPTIONS}
+              value={lengthFor(s.defaultLength).id}
+              onChange={(id) =>
+                update.mutate({ defaultLength: WALK_LENGTHS.find((l) => l.id === id)!.minutes })
+              }
+            />
+          </ChoiceRow>
+          <ChoiceRow label="Walking pace" hint={paceSpeed(s.pace, s.units)}>
+            <Segmented options={PACE_OPTIONS} value={s.pace} onChange={(pace) => update.mutate({ pace })} />
+          </ChoiceRow>
           <ToggleRow
             label="Avoid busy roads"
             value={s.avoidBusyRoads}
@@ -68,7 +87,9 @@ export default function Settings() {
 
         <View className="mt-6">
           <Group>
-            <ValueRow label="Units" value={s.units === 'km' ? 'Kilometres' : 'Miles'} onPress={toggleUnits} />
+            <ChoiceRow label="Distances in">
+              <Segmented options={UNIT_OPTIONS} value={s.units} onChange={(units) => update.mutate({ units })} />
+            </ChoiceRow>
             <Pressable className="flex-row items-center px-4 py-[15px]">
               <Text className="flex-1 font-sans text-[15px] text-ink">About Amble</Text>
               <ChevronRightIcon />
@@ -80,7 +101,7 @@ export default function Settings() {
   );
 }
 
-function Group({ children }: { children: React.ReactNode }) {
+function Group({ children }: { children: ReactNode }) {
   return (
     <View
       className="overflow-hidden rounded-panel bg-paper-raised"
@@ -91,15 +112,16 @@ function Group({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ValueRow({ label, value, onPress }: { label: string; value: string; onPress: () => void }) {
+/** A setting with a few named options: its label (and a hint), then the choices below. */
+function ChoiceRow({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
-    <Pressable
-      onPress={onPress}
-      className="flex-row items-center border-b border-ink/[0.07] px-4 py-[15px]"
-    >
-      <Text className="flex-1 font-sans text-[15px] text-ink">{label}</Text>
-      <Text className="font-sans-medium text-[14px] text-ink/50">{value}</Text>
-    </Pressable>
+    <View className="border-b border-ink/[0.07] px-4 pb-3.5 pt-[14px]">
+      <View className="mb-2.5 flex-row items-baseline justify-between">
+        <Text className="font-sans text-[15px] text-ink">{label}</Text>
+        {hint ? <Text className="font-sans text-[12px] text-ink/45">{hint}</Text> : null}
+      </View>
+      {children}
+    </View>
   );
 }
 
@@ -115,20 +137,18 @@ function ToggleRow({
   last?: boolean;
 }) {
   return (
-    <View className={`flex-row items-center px-4 py-[15px] ${last ? '' : 'border-b border-ink/[0.07]'}`}>
-      <Text className="flex-1 font-sans text-[15px] text-ink">{label}</Text>
-      <Toggle value={value} onChange={() => onChange(!value)} />
-    </View>
-  );
-}
-
-function Toggle({ value, onChange }: { value: boolean; onChange: () => void }) {
-  return (
     <Pressable
-      onPress={onChange}
-      className={`h-[26px] w-[44px] justify-center rounded-full px-[3px] ${value ? 'bg-sage' : 'bg-ink/[0.18]'}`}
+      onPress={() => onChange(!value)}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
+      className={`flex-row items-center px-4 py-[15px] ${last ? '' : 'border-b border-ink/[0.07]'}`}
     >
-      <View className={`h-5 w-5 rounded-full bg-white ${value ? 'self-end' : 'self-start'}`} />
+      <Text className="flex-1 font-sans text-[15px] text-ink">{label}</Text>
+      <View
+        className={`h-[26px] w-[44px] justify-center rounded-full px-[3px] ${value ? 'bg-sage' : 'bg-ink/[0.18]'}`}
+      >
+        <View className={`h-5 w-5 rounded-full bg-white ${value ? 'self-end' : 'self-start'}`} />
+      </View>
     </Pressable>
   );
 }

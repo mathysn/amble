@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { Coord, RouteStep } from '@amble/shared';
-import type { Router, RoutedPath } from './routing.js';
-import { planReroute, RoutingUnavailableError, orderedNearestIndices, type RerouteInput } from './reroute.js';
+import type { RouteOptions, Router, RoutedPath } from './routing.js';
+import {
+  planReroute,
+  RoutingUnavailableError,
+  orderedNearestIndices,
+  type RerouteInput,
+} from './reroute.js';
 
 /** Straight-line fake: one step per leg plus a final arrive, capturing the waypoints. */
-function fakeRouter(calls: Coord[][] = []): Router {
+function fakeRouter(calls: Coord[][] = [], options: (RouteOptions | undefined)[] = []): Router {
   return {
-    async routeThrough(coords) {
+    async routeThrough(coords, opts) {
       calls.push(coords);
+      options.push(opts);
       const steps: RouteStep[] = coords.slice(0, -1).map((_, i) => ({
         instruction: `leg ${i}`,
         distanceM: 100,
@@ -15,7 +21,13 @@ function fakeRouter(calls: Coord[][] = []): Router {
         type: i === 0 ? 11 : 6,
         startIndex: i,
       }));
-      steps.push({ instruction: 'Arrive', distanceM: 0, wayName: null, type: 10, startIndex: coords.length - 1 });
+      steps.push({
+        instruction: 'Arrive',
+        distanceM: 0,
+        wayName: null,
+        type: 10,
+        startIndex: coords.length - 1,
+      });
       const path: RoutedPath = {
         geometry: { type: 'LineString', coordinates: coords.map((c) => [c.lng, c.lat]) },
         steps,
@@ -41,12 +53,22 @@ const failingRouter: Router = {
 // A square-ish loop: start (0) → A (2) → B (4) → C (6) → start (8), 0.001° ≈ 70–110 m.
 const start = { lat: 51.5, lng: -0.12 };
 const coords: [number, number][] = [
-  [-0.12, 51.5], [-0.119, 51.5], [-0.118, 51.5], [-0.118, 51.501], [-0.118, 51.502],
-  [-0.119, 51.502], [-0.12, 51.502], [-0.12, 51.501], [-0.12, 51.5],
+  [-0.12, 51.5],
+  [-0.119, 51.5],
+  [-0.118, 51.5],
+  [-0.118, 51.501],
+  [-0.118, 51.502],
+  [-0.119, 51.502],
+  [-0.12, 51.502],
+  [-0.12, 51.501],
+  [-0.12, 51.5],
 ];
 const A = { lat: 51.5, lng: -0.118, order: 1, found: false };
 const B = { lat: 51.502, lng: -0.118, order: 2, found: false };
 const C = { lat: 51.502, lng: -0.12, order: 3, found: false };
+
+/** The waypoints a leg-by-leg route went through: each leg's start, then the last leg's end. */
+const visited = (calls: Coord[][]) => [calls[0]![0], ...calls.map((c) => c.at(-1))];
 
 function input(over: Partial<RerouteInput> = {}): RerouteInput {
   return {
@@ -79,8 +101,9 @@ describe('planReroute — rejoin', () => {
     const calls: Coord[][] = [];
     const plan = await planReroute(input({ router: fakeRouter(calls) }));
 
-    // A (index 2) is behind fromIndex 3; B and C are ahead, in order.
-    expect(calls[0]).toEqual([
+    // A (index 2) is behind fromIndex 3; B and C are ahead, in order, one leg each.
+    expect(calls.every((c) => c.length === 2)).toBe(true);
+    expect(visited(calls)).toEqual([
       { lat: 51.5012, lng: -0.1172 },
       { lat: B.lat, lng: B.lng },
       { lat: C.lat, lng: C.lng },
@@ -94,26 +117,31 @@ describe('planReroute — rejoin', () => {
     expect(plan.steps.at(-1)!.type).toBe(10);
     expect(plan.steps.at(-1)!.startIndex).toBe(7);
     expect(plan.source).toBe('through');
-    // prefix (~250 m) + join (~60 m) + path (1000 m), to 0.1 km
-    expect(plan.distanceKm).toBe(1.3);
+    // prefix (~250 m) + join (~60 m) + 3 legs (1000 m each), to 0.1 km
+    expect(plan.distanceKm).toBe(3.3);
   });
 
   it('skips curiosities already found', async () => {
     const calls: Coord[][] = [];
-    await planReroute(input({ router: fakeRouter(calls), curiosities: [A, { ...B, found: true }, C] }));
-    expect(calls[0]).toHaveLength(3); // here, C, start
+    await planReroute(
+      input({ router: fakeRouter(calls), curiosities: [A, { ...B, found: true }, C] }),
+    );
+    expect(visited(calls)).toHaveLength(3); // here, C, start
   });
 
   it('goes straight home when nothing is left', async () => {
     const calls: Coord[][] = [];
     await planReroute(input({ router: fakeRouter(calls), fromIndex: 7 }));
-    expect(calls[0]).toEqual([{ lat: 51.5012, lng: -0.1172 }, start]);
+    expect(visited(calls)).toEqual([{ lat: 51.5012, lng: -0.1172 }, start]);
   });
 
   it('without fromIndex, re-plans the whole walk from here', async () => {
     const calls: Coord[][] = [];
     const plan = await planReroute(input({ router: fakeRouter(calls), fromIndex: undefined }));
-    expect(calls[0]).toHaveLength(5); // here, A, B, C, start
+    // First pass: here, A, B, C, start (the fake's sharp V at A then earns a junction re-route).
+    expect(visited(calls.slice(0, 4))).toEqual(
+      [{ lat: 51.5012, lng: -0.1172 }, A, B, C, start].map(({ lat, lng }) => ({ lat, lng })),
+    );
     expect(plan.steps[0]!.startIndex).toBe(0);
   });
 
@@ -123,8 +151,22 @@ describe('planReroute — rejoin', () => {
       input({ router: fakeRouter(calls), source: 'synthetic', steps: [], strategy: 'approach' }),
     );
     expect(plan.source).toBe('through');
-    expect(calls[0]).toHaveLength(5);
+    expect(visited(calls.slice(0, 4))).toHaveLength(5);
     expect(plan.route.coordinates).toHaveLength(5); // no prefix for synthetic
+  });
+
+  it('heads for the end point of an A→B walk', async () => {
+    const calls: Coord[][] = [];
+    const finish = { lat: 51.51, lng: -0.11 };
+    await planReroute(input({ router: fakeRouter(calls), finish }));
+    expect(visited(calls).at(-1)).toEqual(finish);
+  });
+
+  it('keeps off the streets already walked', async () => {
+    const calls: Coord[][] = [];
+    const options: (RouteOptions | undefined)[] = [];
+    await planReroute(input({ router: fakeRouter(calls, options) }));
+    expect(options.some((o) => (o?.avoid?.length ?? 0) > 0)).toBe(true);
   });
 
   it('reports routing failures as RoutingUnavailableError', async () => {

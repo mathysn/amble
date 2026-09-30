@@ -1,6 +1,7 @@
 import type { StyleSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { colors } from '../../theme';
 import { safeJson } from './bridge';
+import { ROUTE_ARROW_IMAGE } from './style';
 
 /**
  * The self-contained page the WebMap's WebView loads: MapLibre GL JS (pinned,
@@ -46,7 +47,8 @@ export const PAGE_SCRIPT = `
   var NAV = CFG.mode === 'nav';
   var FOLLOW_ZOOM = 17;
   var FOLLOW_PITCH_3D = 50;
-  var PUCK_TWEEN_MS = 900;
+  var PUCK_TWEEN_MS = 1000;
+  var ARROW_IMAGE = CFG.arrowImage;
   var FRAME_MS = 32;
 
   function post(msg) {
@@ -115,6 +117,28 @@ export const PAGE_SCRIPT = `
     if (sourceFailed || S.errors > 10) {
       post({ type: 'error', reason: sourceFailed ? 'source' : 'tiles', message: msg });
     }
+  });
+
+  // The route's direction chevrons: the style has no sprite, so draw the one
+  // icon it needs (a light ">" that the line layout turns along the route).
+  map.on('styleimagemissing', function (e) {
+    if (!e || e.id !== ARROW_IMAGE || map.hasImage(ARROW_IMAGE)) return;
+    var size = 24;
+    var canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.strokeStyle = CFG.colors.paperRaised;
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(9, 6);
+    ctx.lineTo(16, 12);
+    ctx.lineTo(9, 18);
+    ctx.stroke();
+    map.addImage(ARROW_IMAGE, ctx.getImageData(0, 0, size, size), { pixelRatio: 2 });
   });
 
   map.on('load', function () {
@@ -430,6 +454,7 @@ const PAGE_CSS = `
 export function buildMapHtml(config: MapPageConfig): string {
   const cfg = {
     ...config,
+    arrowImage: ROUTE_ARROW_IMAGE,
     colors: { sage: colors.sage, ink: colors.ink, paperRaised: colors.paperRaised },
   };
   const script = PAGE_SCRIPT.replace(CONFIG_TOKEN, safeJson(cfg));

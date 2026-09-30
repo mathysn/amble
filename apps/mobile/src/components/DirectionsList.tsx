@@ -15,9 +15,12 @@ export function DirectionsList({
   units = 'km',
   fromStep = 0,
   activeStep,
+  roundTrip = true,
 }: {
   steps: RouteStep[];
   units?: Units;
+  /** False for an A→B walk (the last step is "You've arrived", not "Back where you started"). */
+  roundTrip?: boolean;
   fromStep?: number;
   activeStep?: number;
 }) {
@@ -40,7 +43,7 @@ export function DirectionsList({
             <Text
               className={`flex-1 text-[14px] leading-[19px] text-ink ${active ? 'font-sans-semibold' : 'font-sans'}`}
             >
-              {maneuverPhrase(step, { first: index === 0 })}
+              {maneuverPhrase(step, { first: index === 0, roundTrip })}
             </Text>
             {step.distanceM > 0 ? (
               <Mono className="text-ink/40">{formatNavDistance(step.distanceM, units)}</Mono>

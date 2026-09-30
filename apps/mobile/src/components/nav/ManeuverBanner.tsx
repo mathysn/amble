@@ -20,6 +20,8 @@ type Props = {
   /** Current map bearing: pointer arrows are drawn relative to it. */
   cameraBearing: number;
   hasNextCuriosity: boolean;
+  /** False for an A→B walk: "the finish" rather than "home". */
+  roundTrip: boolean;
   units: Units;
   onResume?: () => void;
   onFinish?: () => void;
@@ -60,7 +62,10 @@ export function ManeuverBanner(p: Props) {
         <IconBox>
           <ActivityIndicator color={colors.paper} />
         </IconBox>
-        <Lines title="Finding a new way…" sub="Through what's left, back home." />
+        <Lines
+          title="Finding a new way…"
+          sub={p.roundTrip ? "Through what's left, back home." : "Through what's left, to your finish."}
+        />
       </Card>
     );
   }
@@ -86,7 +91,10 @@ export function ManeuverBanner(p: Props) {
         <IconBox>
           <ManeuverIcon type={10} />
         </IconBox>
-        <Lines title="You're back" sub="Right where you started." />
+        <Lines
+          title={p.roundTrip ? "You're back" : "You're here"}
+          sub={p.roundTrip ? 'Right where you started.' : 'That was the interesting way.'}
+        />
         {p.onFinish && <Pill label="Finish" onPress={p.onFinish} />}
       </Card>
     );
@@ -100,7 +108,9 @@ export function ManeuverBanner(p: Props) {
           ? 'Back to your route'
           : p.hasNextCuriosity
             ? "Something's that way"
-            : 'Head home';
+            : p.roundTrip
+              ? 'Head home'
+              : 'Head to the finish';
     const sub =
       status === 'approach'
         ? 'Your wander begins there.'
@@ -133,7 +143,7 @@ export function ManeuverBanner(p: Props) {
         </IconBox>
         <Lines
           distance={p.distToNextM !== null ? formatNavDistance(p.distToNextM, units) : undefined}
-          title={maneuverTitle(next, { first: p.first })}
+          title={maneuverTitle(next, { first: p.first, roundTrip: p.roundTrip })}
           sub={way ? way.charAt(0).toUpperCase() + way.slice(1) : undefined}
         />
       </Card>

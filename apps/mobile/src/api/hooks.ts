@@ -6,6 +6,7 @@ import {
 } from '@tanstack/react-query';
 import type {
   Curiosity,
+  CuriosityDetails,
   GeoSearchResponse,
   PlanWalkRequest,
   Place,
@@ -24,6 +25,7 @@ export const qk = {
   walk: (id: string) => ['walk', id] as const,
   saved: ['saved'] as const,
   curiosity: (id: string) => ['curiosity', id] as const,
+  curiosityDetails: (id: string) => ['curiosity', id, 'details'] as const,
   geo: (q: string) => ['geo', q] as const,
 };
 
@@ -31,10 +33,20 @@ export const qk = {
 export const useSettings = () =>
   useQuery({ queryKey: qk.settings, queryFn: () => api.get<Settings>('/settings') });
 
+/** Settings changes show at once (optimistic) and roll back if the server says no. */
 export function useUpdateSettings() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (patch: UpdateSettings) => api.patch<Settings>('/settings', patch),
+    onMutate: async (patch) => {
+      await qc.cancelQueries({ queryKey: qk.settings });
+      const prev = qc.getQueryData<Settings>(qk.settings);
+      if (prev) qc.setQueryData<Settings>(qk.settings, { ...prev, ...patch });
+      return { prev };
+    },
+    onError: (_err, _patch, ctx) => {
+      if (ctx?.prev) qc.setQueryData(qk.settings, ctx.prev);
+    },
     onSuccess: (data) => qc.setQueryData(qk.settings, data),
   });
 }
@@ -93,6 +105,15 @@ export function useMarkFound() {
 export const useCuriosity = (id: string) =>
   useQuery({ queryKey: qk.curiosity(id), queryFn: () => api.get<Curiosity>(`/curiosities/${id}`) });
 
+/** Photo, summary and facts for a curiosity (slow the first time: the server looks them up). */
+export const useCuriosityDetails = (id: string, enabled = true) =>
+  useQuery({
+    queryKey: qk.curiosityDetails(id),
+    queryFn: () => api.get<CuriosityDetails>(`/curiosities/${id}/details`, { timeoutMs: 20_000 }),
+    enabled: enabled && !!id,
+    staleTime: 24 * 60 * 60_000,
+  });
+
 export const useSaved = () =>
   useQuery({ queryKey: qk.saved, queryFn: () => api.get<SavedCuriosity[]>('/saved') });
 
@@ -111,6 +132,18 @@ export function useUnsaveCuriosity() {
     mutationFn: (curiosityId: string) => api.del(`/saved/${curiosityId}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.saved }),
   });
+}
+
+/** Whether a curiosity is saved, and a toggle for it. */
+export function useSaveToggle(curiosityId: string) {
+  const { data: saved } = useSaved();
+  const save = useSaveCuriosity();
+  const unsave = useUnsaveCuriosity();
+  const isSaved = !!saved?.some((s) => s.id === curiosityId);
+  return {
+    isSaved,
+    toggle: () => (isSaved ? unsave.mutate(curiosityId) : save.mutate(curiosityId)),
+  };
 }
 
 // ── Geocoding ────────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@ export const UpdateSettingsSchema = SettingsSchema.partial();
 export type UpdateSettings = z.infer<typeof UpdateSettingsSchema>;
 
 export const DEFAULT_SETTINGS: Settings = {
-  defaultLength: 30,
+  defaultLength: 40,
   pace: 'easy',
   avoidBusyRoads: true,
   includeNiche: true,

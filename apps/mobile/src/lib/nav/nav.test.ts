@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { RouteGeometry, RouteStep } from '@amble/shared';
 import { haversineM, makeProjection } from './geo';
-import { alongOfOrdered, buildRouteIndex, MANEUVER } from './routeIndex';
+import { alongOfOrdered, buildRouteIndex, MANEUVER, pointAt } from './routeIndex';
 import { initTracker, navView, updateTracker, type Fix, type TrackerState } from './tracker';
 import { loopAround, simulateWalk } from './simulator';
 import { initAnnouncer, nextAnnouncement, type Announcement } from './announcer';
-import { maneuverPhrase, nowPhrase, preparePhrase, spokenDistance } from './phrases';
+import { maneuverPhrase, maneuverTitle, nowPhrase, preparePhrase, spokenDistance } from './phrases';
 import { initReroutePolicy, rerouteFinished, rerouteStarted, shouldReroute } from './reroutePolicy';
 import { cameraBearing, smoothHeading } from './heading';
 import { OFF_ROUTE_MIN_MS, WINDOW_BACK_M } from './constants';
+import { filterFix, initFixFilter, type FixFilterState } from './fixFilter';
 
 const CENTER = { lat: 51.5129, lng: -0.1224 };
 
@@ -181,6 +182,24 @@ describe('tracker', () => {
     expect(view.distToNextM!).toBeLessThan(310);
   });
 
+  it('holds the snapped puck through small backward jitter, but shows a real step back', () => {
+    // Mid-segment, away from vertices (where a near-tie can resolve either way).
+    const fixes = simulateWalk(loop, { untilM: 150, noiseM: 0 });
+    const { index, last } = run(loop, loopSteps, fixes);
+    const behind = (m: number): Fix => ({
+      ...pointAt(index, last.alongM - m).coord,
+      accuracy: 8,
+      t: last.lastFix!.t + 1000,
+    });
+    // 5 m back along the street: the puck stays put.
+    const jitter = updateTracker(index, last, behind(5));
+    expect(jitter.alongM).toBeLessThan(last.alongM);
+    expect(jitter.display).toEqual(last.display);
+    // 20 m back: the walker really turned round.
+    const back = updateTracker(index, last, behind(20));
+    expect(haversineM(back.display!, last.display!)).toBeGreaterThan(15);
+  });
+
   it('never flags a synthetic route as off-route', () => {
     const fixes = simulateWalk(loop, { detour: { atM: 300, lengthM: 250, offsetM: 90 } });
     const { states } = run(loop, [], fixes);
@@ -326,6 +345,14 @@ describe('phrases', () => {
       'Bear left onto Floral Street, then turn right.',
     );
   });
+
+  it('says "arrived" rather than "back where you started" on an A→B walk', () => {
+    const arrive = { type: 10, wayName: null };
+    expect(maneuverTitle(arrive, { roundTrip: false })).toBe("You've arrived");
+    expect(preparePhrase(arrive, 60, 'km', { roundTrip: false })).toBe("In 60 metres, you'll be there.");
+    expect(nowPhrase(arrive, null, { roundTrip: false })).toBe("You've arrived. Lovely wander.");
+    expect(maneuverTitle(arrive)).toBe('Back where you started');
+  });
 });
 
 describe('reroutePolicy', () => {
@@ -383,5 +410,76 @@ describe('heading', () => {
     expect(cameraBearing({ ...base, speedMps: 0.2 })).toBe(180);
     expect(cameraBearing({ ...base, speedMps: 0.2, compass: 5 })).toBe(0);
     expect(cameraBearing({ ...base, onRoute: false })).toBe(180);
+  });
+});
+
+describe('fixFilter', () => {
+  const proj = makeProjection(CENTER);
+  /** Deterministic noise in [-1, 1). */
+  function noise(seed: number) {
+    let a = seed;
+    return () => {
+      a = (a * 1_103_515_245 + 12_345) % 2 ** 31;
+      return (a / 2 ** 31) * 2 - 1;
+    };
+  }
+  function feed(fixes: Fix[]) {
+    let state: FixFilterState = initFixFilter();
+    const out: (Fix | null)[] = [];
+    for (const f of fixes) {
+      const r = filterFix(state, f);
+      state = r.state;
+      out.push(r.fix);
+    }
+    return out;
+  }
+  const at = (x: number, y: number, t: number, accuracy = 10): Fix => ({
+    ...proj.toCoord([x, y]),
+    accuracy,
+    t: 1_700_000_000_000 + t * 1000,
+  });
+
+  it('settles jitter around a standing walker', () => {
+    const n = noise(3);
+    const raw = Array.from({ length: 60 }, (_, i) => at(n() * 8, n() * 8, i));
+    const out = feed(raw);
+    const spread = (fs: Fix[]) =>
+      fs.reduce((m, f) => m + haversineM(f, CENTER), 0) / fs.length;
+    const tail = out.slice(20) as Fix[];
+    expect(spread(tail)).toBeLessThan(spread(raw.slice(20)) / 2);
+    expect(haversineM(out.at(-1)!, CENTER)).toBeLessThan(4);
+  });
+
+  it('keeps up with a steady walk', () => {
+    const n = noise(5);
+    const raw = Array.from({ length: 40 }, (_, i) => at(i * 1.4 + n() * 3, n() * 3, i, 5));
+    const out = feed(raw);
+    for (let i = 20; i < 40; i++) {
+      expect(haversineM(out[i]!, proj.toCoord([i * 1.4, 0]))).toBeLessThan(4);
+    }
+  });
+
+  it('turns a street corner without cutting it by much', () => {
+    // 20 s east at walking pace, then 20 s north.
+    const truth = (i: number): [number, number] => (i <= 20 ? [i * 1.4, 0] : [28, (i - 20) * 1.4]);
+    const out = feed(Array.from({ length: 41 }, (_, i) => at(...truth(i), i, 5)));
+    const worst = Math.max(...out.map((f, i) => haversineM(f!, proj.toCoord(truth(i)))));
+    expect(worst).toBeLessThan(6);
+  });
+
+  it('drops a single wild reading, but follows several that agree', () => {
+    const still = Array.from({ length: 10 }, (_, i) => at(0, 0, i, 8));
+    const out = feed([...still, at(200, 0, 10, 8), at(0, 0, 11, 8)]);
+    expect(out[10]).toBeNull();
+    expect(haversineM(out[11]!, CENTER)).toBeLessThan(3);
+
+    const moved = feed([...still, at(200, 0, 10), at(201, 0, 11), at(202, 0, 12)]);
+    expect(moved.slice(10, 12)).toEqual([null, null]);
+    expect(haversineM(moved[12]!, proj.toCoord([202, 0]))).toBeLessThan(1);
+  });
+
+  it('starts over after a long gap', () => {
+    const out = feed([at(0, 0, 0), at(0, 0, 1), at(300, 0, 120)]);
+    expect(haversineM(out[2]!, proj.toCoord([300, 0]))).toBeLessThan(1);
   });
 });

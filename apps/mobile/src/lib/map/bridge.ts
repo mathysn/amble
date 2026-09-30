@@ -11,7 +11,7 @@
 
 export type LngLat = [number, number];
 export type CameraMode = 'follow' | 'overview' | 'free';
-export type StopState = 'start' | 'next' | 'unfound' | 'found';
+export type StopState = 'start' | 'end' | 'next' | 'unfound' | 'found';
 
 export type MapInMessage =
   | { type: 'insets'; top: number; bottom: number }
